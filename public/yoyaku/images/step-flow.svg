@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Step flow reservation image placeholder</title>
+  <desc id="desc">Placeholder image for the step flow reservation template.</desc>
+  <rect width="1200" height="675" fill="#f1f7ff"/>
+  <rect x="126" y="98" width="948" height="479" rx="46" fill="#ffffff"/>
+  <g fill="#2563eb">
+    <circle cx="260" cy="220" r="54"/>
+    <circle cx="460" cy="220" r="54" opacity=".32"/>
+    <circle cx="660" cy="220" r="54" opacity=".32"/>
+    <circle cx="860" cy="220" r="54" opacity=".32"/>
+  </g>
+  <g stroke="#2563eb" stroke-width="18" stroke-linecap="round" opacity=".25">
+    <path d="M324 220h72"/>
+    <path d="M524 220h72"/>
+    <path d="M724 220h72"/>
+  </g>
+  <rect x="220" y="344" width="760" height="64" rx="20" fill="#111827" opacity=".1"/>
+  <rect x="220" y="438" width="420" height="58" rx="20" fill="#2563eb" opacity=".16"/>
+  <text x="220" y="535" fill="#111827" font-family="Arial, sans-serif" font-size="42" font-weight="700">STEP FLOW</text>
+</svg>

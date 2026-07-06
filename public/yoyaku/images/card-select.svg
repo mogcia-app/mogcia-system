@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Card select reservation image placeholder</title>
+  <desc id="desc">Placeholder image for the card select reservation template.</desc>
+  <rect width="1200" height="675" fill="#fff7ed"/>
+  <rect x="105" y="105" width="990" height="465" rx="46" fill="#ffffff"/>
+  <g>
+    <rect x="168" y="166" width="250" height="322" rx="30" fill="#ff8a15" opacity=".18"/>
+    <rect x="475" y="166" width="250" height="322" rx="30" fill="#ff8a15"/>
+    <rect x="782" y="166" width="250" height="322" rx="30" fill="#ff8a15" opacity=".18"/>
+  </g>
+  <rect x="506" y="390" width="188" height="38" rx="19" fill="#ffffff" opacity=".8"/>
+  <text x="168" y="535" fill="#111827" font-family="Arial, sans-serif" font-size="42" font-weight="700">VISUAL PLANS</text>
+</svg>

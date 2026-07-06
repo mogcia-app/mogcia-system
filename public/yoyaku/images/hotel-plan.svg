@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Hotel plan reservation image placeholder</title>
+  <desc id="desc">Placeholder image for the hotel plan reservation template.</desc>
+  <rect width="1200" height="675" fill="#eef2ff"/>
+  <rect x="118" y="92" width="964" height="491" rx="46" fill="#ffffff"/>
+  <rect x="186" y="160" width="828" height="170" rx="34" fill="#4f46e5" opacity=".18"/>
+  <rect x="186" y="376" width="250" height="88" rx="24" fill="#4f46e5"/>
+  <rect x="476" y="376" width="250" height="88" rx="24" fill="#4f46e5" opacity=".18"/>
+  <rect x="766" y="376" width="250" height="88" rx="24" fill="#4f46e5" opacity=".18"/>
+  <text x="186" y="535" fill="#111827" font-family="Arial, sans-serif" font-size="42" font-weight="700">STAY PLANS</text>
+</svg>

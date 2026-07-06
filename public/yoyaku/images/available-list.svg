@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Available list reservation image placeholder</title>
+  <desc id="desc">Placeholder image for the available list reservation template.</desc>
+  <rect width="1200" height="675" fill="#f0fdfa"/>
+  <rect x="138" y="92" width="924" height="491" rx="46" fill="#ffffff"/>
+  <g fill="#2f6b4f">
+    <rect x="214" y="166" width="772" height="70" rx="24" opacity=".12"/>
+    <rect x="214" y="266" width="772" height="70" rx="24"/>
+    <rect x="214" y="366" width="772" height="70" rx="24" opacity=".12"/>
+  </g>
+  <circle cx="904" cy="201" r="20" fill="#2f6b4f" opacity=".28"/>
+  <circle cx="904" cy="301" r="20" fill="#ffffff" opacity=".9"/>
+  <circle cx="904" cy="401" r="20" fill="#2f6b4f" opacity=".28"/>
+  <text x="214" y="526" fill="#111827" font-family="Arial, sans-serif" font-size="42" font-weight="700">OPEN SLOTS</text>
+</svg>

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Staff select reservation image placeholder</title>
+  <desc id="desc">Placeholder image for the staff select reservation template.</desc>
+  <rect width="1200" height="675" fill="#fdf2f8"/>
+  <rect x="112" y="100" width="976" height="475" rx="46" fill="#ffffff"/>
+  <g fill="#db2777">
+    <circle cx="330" cy="250" r="82" opacity=".18"/>
+    <circle cx="600" cy="250" r="82"/>
+    <circle cx="870" cy="250" r="82" opacity=".18"/>
+  </g>
+  <rect x="234" y="386" width="192" height="40" rx="20" fill="#111827" opacity=".08"/>
+  <rect x="504" y="386" width="192" height="40" rx="20" fill="#db2777" opacity=".24"/>
+  <rect x="774" y="386" width="192" height="40" rx="20" fill="#111827" opacity=".08"/>
+  <text x="222" y="526" fill="#111827" font-family="Arial, sans-serif" font-size="42" font-weight="700">CHOOSE EXPERT</text>
+</svg>

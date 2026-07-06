@@ -1,0 +1,30 @@
+<svg width="1200" height="900" viewBox="0 0 1200 900" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1200" height="900" rx="48" fill="#F7F1EA"/>
+  <rect x="56" y="56" width="1088" height="788" rx="36" fill="#FFFFFF"/>
+  <rect x="96" y="96" width="1008" height="78" rx="20" fill="#F4EFE8"/>
+  <rect x="124" y="123" width="212" height="22" rx="11" fill="#1A2E4A" fill-opacity="0.92"/>
+  <rect x="752" y="124" width="86" height="18" rx="9" fill="#1A2E4A" fill-opacity="0.22"/>
+  <rect x="862" y="124" width="86" height="18" rx="9" fill="#1A2E4A" fill-opacity="0.22"/>
+  <rect x="972" y="112" width="92" height="42" rx="21" fill="#1A2E4A"/>
+  <rect x="96" y="214" width="1008" height="286" rx="30" fill="#1A2E4A"/>
+  <circle cx="883" cy="357" r="123" fill="#D7BFA4" fill-opacity="0.28"/>
+  <path d="M824 319C824 278.131 857.131 245 898 245V245C938.869 245 972 278.131 972 319V395C972 435.869 938.869 469 898 469V469C857.131 469 824 435.869 824 395V319Z" fill="#EFE6DC"/>
+  <rect x="148" y="282" width="204" height="18" rx="9" fill="#FFFFFF" fill-opacity="0.52"/>
+  <rect x="148" y="326" width="442" height="28" rx="14" fill="#FFFFFF"/>
+  <rect x="148" y="370" width="388" height="28" rx="14" fill="#FFFFFF"/>
+  <rect x="148" y="434" width="164" height="48" rx="24" fill="#D8C3AF"/>
+  <rect x="96" y="540" width="312" height="264" rx="28" fill="#F8F5F1"/>
+  <rect x="444" y="540" width="312" height="264" rx="28" fill="#F8F5F1"/>
+  <rect x="792" y="540" width="312" height="264" rx="28" fill="#F8F5F1"/>
+  <rect x="128" y="584" width="96" height="12" rx="6" fill="#1A2E4A" fill-opacity="0.2"/>
+  <rect x="128" y="624" width="210" height="20" rx="10" fill="#1A2E4A" fill-opacity="0.88"/>
+  <rect x="128" y="664" width="224" height="14" rx="7" fill="#1A2E4A" fill-opacity="0.32"/>
+  <rect x="476" y="584" width="96" height="12" rx="6" fill="#1A2E4A" fill-opacity="0.2"/>
+  <rect x="476" y="624" width="210" height="20" rx="10" fill="#1A2E4A" fill-opacity="0.88"/>
+  <rect x="476" y="664" width="224" height="14" rx="7" fill="#1A2E4A" fill-opacity="0.32"/>
+  <rect x="824" y="584" width="96" height="12" rx="6" fill="#1A2E4A" fill-opacity="0.2"/>
+  <rect x="824" y="624" width="210" height="20" rx="10" fill="#1A2E4A" fill-opacity="0.88"/>
+  <rect x="824" y="664" width="224" height="14" rx="7" fill="#1A2E4A" fill-opacity="0.32"/>
+  <rect x="116" y="744" width="150" height="34" rx="17" fill="#FFFFFF"/>
+  <text x="104" y="866" fill="#1A2E4A" fill-opacity="0.65" font-family="Arial, sans-serif" font-size="28" letter-spacing="5.6">HP / GROWTH PARTNERS</text>
+</svg>

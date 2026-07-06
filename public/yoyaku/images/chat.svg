@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Chat reservation image placeholder</title>
+  <desc id="desc">Placeholder image for the chat reservation template.</desc>
+  <rect width="1200" height="675" fill="#f5f3ff"/>
+  <rect x="170" y="86" width="860" height="503" rx="46" fill="#ffffff"/>
+  <rect x="250" y="170" width="420" height="70" rx="28" fill="#111827" opacity=".08"/>
+  <rect x="530" y="278" width="420" height="70" rx="28" fill="#7c3aed"/>
+  <rect x="250" y="386" width="500" height="70" rx="28" fill="#111827" opacity=".08"/>
+  <circle cx="284" cy="526" r="22" fill="#7c3aed" opacity=".25"/>
+  <circle cx="354" cy="526" r="22" fill="#7c3aed" opacity=".25"/>
+  <circle cx="424" cy="526" r="22" fill="#7c3aed" opacity=".25"/>
+  <text x="250" y="132" fill="#111827" font-family="Arial, sans-serif" font-size="42" font-weight="700">CHAT BOOKING</text>
+</svg>
