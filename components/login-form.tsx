@@ -22,6 +22,10 @@ const authErrorMessages: Record<string, string> = {
 };
 
 function getAuthErrorMessage(error: unknown) {
+  if (error instanceof Error && error.message === "missing-firebase-config") {
+    return "Firebaseの公開環境変数が設定されていません。";
+  }
+
   if (typeof error === "object" && error && "code" in error) {
     const code = String((error as { code: unknown }).code);
     return authErrorMessages[code] || "ログインに失敗しました。入力内容を確認してください。";
@@ -44,6 +48,10 @@ export default function LoginForm() {
     setIsLoading(true);
 
     try {
+      if (!firebaseAuth) {
+        throw new Error("missing-firebase-config");
+      }
+
       await setPersistence(
         firebaseAuth,
         remember ? browserLocalPersistence : browserSessionPersistence,

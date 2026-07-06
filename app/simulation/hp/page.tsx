@@ -1,9 +1,9 @@
 import AuthGuard from "@/components/auth-guard";
-import SimulationHistoryList from "@/components/simulation-history-list";
+import HpSimulator from "@/components/hp-simulator";
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
 
-export default function SimulationHistoryPage() {
+export default function HpSimulationPage() {
   return (
     <main className="min-h-screen bg-white text-black">
       <SiteHeader active="シュミレーション" />
@@ -12,16 +12,16 @@ export default function SimulationHistoryPage() {
         <section className="border-b border-black/8 pb-6">
           <div className="max-w-5xl">
             <p className="text-[11px] tracking-[0.18em] text-black/35">
-              SAVED SIMULATIONS
+              HP SIMULATION
             </p>
             <h1 className="mt-2 text-[1.5rem] leading-[1.25] font-light sm:text-[1.7rem] lg:text-[1.8rem]">
-              保存済みシミュレーション
+              HP改善シミュレーション
             </h1>
           </div>
         </section>
 
         <AuthGuard>
-          <SimulationHistoryList />
+          <HpSimulator />
         </AuthGuard>
       </section>
 

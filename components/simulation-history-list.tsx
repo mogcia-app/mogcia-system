@@ -124,7 +124,7 @@ export default function SimulationHistoryList() {
           シミュレーション実行後に「保存する」を押すと、ここに一覧で残ります。
         </p>
         <Link
-          href="/simulation"
+          href="/simulation/commo"
           className="mt-6 inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
         >
           シミュレーションへ戻る
@@ -145,7 +145,7 @@ export default function SimulationHistoryList() {
           </p>
         </div>
         <Link
-          href="/simulation"
+          href="/simulation/commo"
           className="inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
         >
           新しくシミュレーションする

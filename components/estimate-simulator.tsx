@@ -1049,7 +1049,7 @@ export default function EstimateSimulator() {
                   {isSaved ? "保存済み" : "保存する"}
                 </button>
                 <Link
-                  href="/simulation/history"
+                  href="/simulation/commo/history"
                   className="inline-flex h-10 items-center justify-center gap-2 border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
                 >
                   <ListChecks size={16} />
