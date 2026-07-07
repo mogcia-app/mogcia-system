@@ -27,6 +27,10 @@ type AnalyzePayload = {
     deliveryReservationRate: number;
     estimatedReservations: number;
     lineReservationRevenue: number;
+    repeatRatio?: number;
+    directRatio?: number;
+    unitPrice?: number;
+    cumulativeProfit?: number;
     monthlyDifference: number;
   }>;
 };
@@ -42,31 +46,61 @@ const ensureArray = (value: unknown) =>
   Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 
 function fallbackAnalyze(payload: AnalyzePayload): AiComment {
-  const topPriority = payload.result.priority[0] || "LINE登録導線の強化";
   const lastProjection = payload.projectionRows?.[payload.projectionRows.length - 1];
   const deliveryCount = lastProjection?.deliveryCount || 4;
-  const estimatedReservations = Math.round(lastProjection?.estimatedReservations || 0);
+  const facilityName = String(payload.inputs.facilityName || "貴施設");
+  const externalSiteLabel =
+    payload.industry === "hotel"
+      ? "OTA"
+      : payload.industry === "golf"
+        ? "外部予約サイト"
+        : "グルメサイト";
+  const thirdPartyRatio = Number(payload.inputs.thirdPartyRatio || 0);
+  const repeatRatio = Number(payload.inputs.repeatRatio || 0);
+  const directRatio = Number(payload.inputs.directRatio || 0);
+  const finalLineFriends = Math.round(lastProjection?.lineFriends || 0);
+  const finalRepeatRatio = Math.round(lastProjection?.repeatRatio || repeatRatio);
+  const finalDirectRatio = Math.round(lastProjection?.directRatio || directRatio);
+  const finalMonthlyDifference = lastProjection?.monthlyDifference || payload.result.monthlyImpact;
+  const finalCumulativeProfit =
+    lastProjection?.cumulativeProfit ?? finalMonthlyDifference * 12 - 510000;
 
   return {
     improvements: [
-      "受付・会計・チェックアウト時にスタッフから一言声がけし、その場で公式LINE登録を促す。",
-      "登録特典や次回予約特典を用意し、登録する理由をお客様に分かりやすく伝える。",
-      `登録後は月${deliveryCount}回を目安に、季節案内・空き枠案内・限定プランを配信し、月間${estimatedReservations}件前後の予約化を狙う。`,
-      "OTA・外部予約サイト経由のお客様にも、次回は公式予約が便利だと案内して直接予約へ誘導する。",
+      "宿泊時・チェックアウト時のスタッフ声かけを強化",
+      "登録特典として宿泊割引・館内利用特典・ポイント付与を用意",
+      "館内POP・客室内案内・フロント周辺にQRコードを設置",
+      `月2〜${deliveryCount}回、季節プラン・直前空室・連泊プランを配信`,
+      "LINE経由予約数・登録数・配信反応を毎月確認し改善",
     ],
-    priorityMeasures: payload.result.priority.slice(0, 3),
+    priorityMeasures: [
+      "LINE登録導線の整備",
+      "登録特典の設計",
+      "リピーター向け配信の開始",
+      "公式予約・直接予約への誘導強化",
+    ],
     commoActions: [
-      "公式LINEアカウントの立ち上げと登録導線の設計",
-      "現場スタッフが使える声がけトークと登録案内POPの設計",
-      "顧客属性や利用履歴に合わせたセグメント配信",
-      "OTA経由のお客様を公式予約へ戻す導線設計と効果確認",
-      "配信結果をもとにした継続改善",
+      "スタッフ向けのLINE登録案内トークを作成",
+      "館内POP・QRコード付き案内物を作成",
+      "初回登録特典を設計",
+      "月次配信カレンダーを作成",
+      "配信結果をもとに改善提案を実施",
     ],
-    salesTalk: `今回の入力値では、月間 ${formatYen(
-      payload.result.monthlyImpact,
-    )}、年間 ${formatYen(
-      payload.result.annualImpact,
-    )} の改善余地があります。まずは「${topPriority}」から始めると、OTA集客を活かしながら手数料削減とリピーター育成の両方につながりやすいです。commo.では、LINE登録から再来訪、公式予約への導線まで一連で設計できます。`,
+    salesTalk: `${facilityName}様は、${externalSiteLabel}予約比率が${Math.round(
+      thirdPartyRatio,
+    )}%と高く、予約獲得の多くを外部サイトに依存している状態です。そのため、公式LINEを活用して宿泊後のお客様と継続的につながり、再来訪や公式予約への転換を増やすことで、手数料の削減と売上改善が期待できます。
+
+今回の試算では、12ヶ月後にLINE友だち数が${finalLineFriends}人、リピーター率が${Math.round(
+      repeatRatio,
+    )}%から${finalRepeatRatio}%、公式・自社予約率が${Math.round(
+      directRatio,
+    )}%から${finalDirectRatio}%へ改善する想定です。その結果、12ヶ月目には月間${formatYen(
+      finalMonthlyDifference,
+    )}の売上増加、12ヶ月累計では${formatYen(
+      finalCumulativeProfit,
+    )}の収支改善が見込まれます。
+
+まずは宿泊時のLINE登録促進、館内POP設置、宿泊後の限定プラン配信から始めることで、段階的に外部予約依存を下げていくことができます。`,
   };
 }
 
@@ -113,7 +147,7 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "あなたはcommo.の営業支援AIです。ホテル・ゴルフ場・飲食店向けに、公式LINE導入後の収支シミュレーションを踏まえ、OTAや外部予約サイトで集客した顧客を公式LINEでリピーター化し、次回以降の公式予約へつなげる提案を日本語で簡潔に作成してください。改善提案には、スタッフの声がけ、登録特典、案内POP、配信内容、月間配信回数、LINE経由予約見込み数、外部予約手数料削減を使った具体策を含めてください。必ずJSONのみを返してください。",
+              "あなたはcommo.の営業支援AIです。ホテル・ゴルフ場・飲食店向けに、公式LINE導入後の収支シミュレーションを踏まえ、OTAや外部予約サイトで集客した顧客を公式LINEでリピーター化し、次回以降の公式予約へつなげる提案を日本語で簡潔に作成してください。salesTalkは、1. 現状の課題、2. 導入後の見込み、3. 実施すべき施策の順で、入力値とprojectionRowsの12ヶ月目の数値を必ず反映してください。「年間で約◯円の売上増加」とは書かず、「12ヶ月目には月間約◯円の売上増加、12ヶ月累計では約◯円の収支改善」と売上増加と収支改善を分けてください。改善提案には、スタッフ声かけ、館内POP・QRコード、登録特典、季節プラン・空室案内・連泊プラン配信、公式・LINE経由予約への段階的誘導を含めてください。必ずJSONのみを返してください。",
           },
           {
             role: "user",

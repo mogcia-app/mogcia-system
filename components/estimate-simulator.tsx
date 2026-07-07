@@ -53,10 +53,14 @@ type ProjectionRow = {
   lineReservationRevenue: number;
   repeatRevenue: number;
   feeSaving: number;
+  unitPriceIncreaseRevenue: number;
+  monthlyProfit: number;
+  cumulativeProfit: number;
   repeatRatio: number;
   directRatio: number;
   thirdPartyRatio: number;
   unitPrice: number;
+  isAggressive: boolean;
 };
 
 type SheetRow = {
@@ -65,6 +69,7 @@ type SheetRow = {
   values: number[];
   emphasis?: "positive" | "negative" | "strong";
   format?: "yen" | "number" | "percent";
+  detail?: string;
 };
 
 type SheetBlock = {
@@ -248,7 +253,7 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
 };
 
 const initialScenario: Record<ScenarioKey, number> = {
-  line: 20,
+  line: 1.7,
   repeat: 10,
   direct: 10,
   unitPrice: 5,
@@ -266,6 +271,10 @@ const deliveryReservationRateByIndustry: Record<Industry, number> = {
   restaurant: 0.018,
 };
 
+const hotelAverageGuestsPerRoom = 1.5;
+const repeatRevenueAdjustmentFactor = 0.35;
+const otaShiftFactor = 0.7;
+const conservativeImpactFactor = 0.75;
 const initialLineSetupCost = 150000;
 const monthlyLineOperationCost = 30000;
 const simulationHistoryStorageKey = "commo-simulation-history";
@@ -328,12 +337,11 @@ function getAverageUnitPrice(industry: Industry, inputs: SimulationInputs) {
   return visitorPrice || memberPrice || toNumber(inputs.averageUnitPrice);
 }
 
-function getCurrentRevenue(industry: Industry, inputs: SimulationInputs) {
-  const monthlyCustomers = toNumber(inputs.monthlyCustomers);
-  const unitPrice = getAverageUnitPrice(industry, inputs);
+function getMonthlyCustomers(industry: Industry, inputs: SimulationInputs) {
+  const enteredMonthlyCustomers = toNumber(inputs.monthlyCustomers);
 
-  if (monthlyCustomers > 0 && unitPrice > 0) {
-    return monthlyCustomers * unitPrice;
+  if (enteredMonthlyCustomers > 0) {
+    return enteredMonthlyCustomers;
   }
 
   if (industry === "hotel") {
@@ -341,11 +349,30 @@ function getCurrentRevenue(industry: Industry, inputs: SimulationInputs) {
       toNumber(inputs.roomCount) *
       30 *
       (toNumber(inputs.occupancyRate) / 100) *
-      unitPrice
+      hotelAverageGuestsPerRoom
     );
   }
 
   return 0;
+}
+
+function getCurrentRevenue(industry: Industry, inputs: SimulationInputs) {
+  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
+  const unitPrice = getAverageUnitPrice(industry, inputs);
+
+  if (monthlyCustomers > 0 && unitPrice > 0) {
+    return monthlyCustomers * unitPrice;
+  }
+
+  return 0;
+}
+
+function getCommissionRate(industry: Industry, inputs: SimulationInputs) {
+  const enteredCommissionRate = toNumber(inputs.commissionRate);
+
+  return enteredCommissionRate > 0
+    ? Math.min(enteredCommissionRate, 100) / 100
+    : feeRateByIndustry[industry];
 }
 
 function calculateSimulation(
@@ -354,22 +381,28 @@ function calculateSimulation(
   scenario: Record<ScenarioKey, number>,
 ): SimulationResult {
   const currentRevenue = getCurrentRevenue(industry, inputs);
-  const monthlyCustomers = toNumber(inputs.monthlyCustomers);
+  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
   const unitPrice = getAverageUnitPrice(industry, inputs);
-  const thirdPartyRatio = Math.min(toNumber(inputs.thirdPartyRatio), 100) / 100;
-  const enteredCommissionRate = toNumber(inputs.commissionRate);
-  const commissionRate =
-    enteredCommissionRate > 0
-      ? Math.min(enteredCommissionRate, 100) / 100
-      : feeRateByIndustry[industry];
-  const lineNewFriends = monthlyCustomers * (scenario.line / 100);
-  const lineImpact = lineNewFriends * unitPrice * 0.08;
-  const repeatImpact = currentRevenue * (scenario.repeat / 100) * 0.35;
-  const directShiftRevenue = currentRevenue * thirdPartyRatio * (scenario.direct / 100);
-  const feeSaving = directShiftRevenue * commissionRate;
+  const commissionRate = getCommissionRate(industry, inputs);
+  const lineFriendsAfterYear = monthlyCustomers * (scenario.line / 100) * 12;
+  const improvedUnitPrice =
+    unitPrice * (1 + Math.min(scenario.unitPrice, industry === "hotel" ? 5 : 8) / 100);
+  const lineImpact =
+    lineFriendsAfterYear * deliveryReservationRateByIndustry[industry] * improvedUnitPrice;
+  const repeatImpact =
+    monthlyCustomers *
+    (Math.min(scenario.repeat, industry === "hotel" ? 10 : 15) / 100) *
+    improvedUnitPrice *
+    repeatRevenueAdjustmentFactor;
+  const feeSaving = lineImpact * commissionRate * otaShiftFactor;
   const directImpact = feeSaving;
-  const unitPriceImpact = currentRevenue * (scenario.unitPrice / 100);
-  const monthlyImpact = lineImpact + repeatImpact + directImpact + unitPriceImpact;
+  const unitPriceImpact =
+    monthlyCustomers * (improvedUnitPrice - unitPrice) * (industry === "hotel" ? 0.25 : 0.35);
+  const rawMonthlyImpact = lineImpact + repeatImpact + directImpact + unitPriceImpact;
+  const monthlyImpact = Math.min(
+    rawMonthlyImpact * conservativeImpactFactor,
+    currentRevenue > 0 ? currentRevenue * 0.12 : rawMonthlyImpact * conservativeImpactFactor,
+  );
 
   const priority = [
     { label: "LINE登録導線の強化", value: lineImpact },
@@ -424,35 +457,65 @@ function buildProjectionRows(
   scenario: Record<ScenarioKey, number>,
   result: SimulationResult,
 ): ProjectionRow[] {
-  const monthlyCustomers = toNumber(inputs.monthlyCustomers);
+  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
   const currentLineFriends = 0;
-  const projectedLineFriends = monthlyCustomers * (scenario.line / 100);
   const currentRepeatRatio = toNumber(inputs.repeatRatio);
   const currentDirectRatio = toNumber(inputs.directRatio);
   const currentThirdPartyRatio = toNumber(inputs.thirdPartyRatio);
   const currentUnitPrice = getAverageUnitPrice(industry, inputs);
+  const commissionRate = getCommissionRate(industry, inputs);
+  const lineRegistrationRate = scenario.line / 100;
   const deliveryReservationRate = deliveryReservationRateByIndustry[industry];
+  const maxRepeatImprovement = industry === "hotel" ? 10 : 15;
+  const repeatImprovementTarget = Math.min(scenario.repeat, maxRepeatImprovement);
+  const unitPriceImprovementTarget =
+    Math.min(scenario.unitPrice, industry === "hotel" ? 5 : 8) / 100;
+  const directIncreaseTarget = Math.min(scenario.direct, currentThirdPartyRatio);
 
   let cumulativeDifference = 0;
+  let cumulativeProfit = 0;
   let previousLineFriends = 0;
 
   return Array.from({ length: 12 }, (_, index) => {
     const month = index + 1;
     const label = `${month}ヶ月目`;
     const ramp = getRamp(month);
-    const monthlyDifference = result.monthlyImpact * ramp;
+    const monthlyAddedLineFriends = monthlyCustomers * lineRegistrationRate;
+    const lineFriends = currentLineFriends + monthlyAddedLineFriends * month;
+    const improvedUnitPrice = currentUnitPrice * (1 + unitPriceImprovementTarget * ramp);
+    const estimatedReservations = lineFriends * deliveryReservationRate;
+    const lineReservationRevenue = estimatedReservations * improvedUnitPrice;
+    const repeatRateIncrease = (repeatImprovementTarget / 100) * ramp;
+    const repeatRevenue =
+      monthlyCustomers *
+      repeatRateIncrease *
+      improvedUnitPrice *
+      repeatRevenueAdjustmentFactor;
+    const feeSaving = lineReservationRevenue * commissionRate * otaShiftFactor;
+    const unitPriceIncreaseRevenue =
+      monthlyCustomers *
+      (improvedUnitPrice - currentUnitPrice) *
+      (industry === "hotel" ? 0.25 : 0.35);
+    const rawMonthlyDifference =
+      lineReservationRevenue + repeatRevenue + feeSaving + unitPriceIncreaseRevenue;
+    const conservativeMonthlyDifference =
+      rawMonthlyDifference * conservativeImpactFactor;
+    const monthlyDifference = Math.min(
+      conservativeMonthlyDifference,
+      result.currentRevenue > 0
+        ? result.currentRevenue * 0.12
+        : conservativeMonthlyDifference,
+    );
     cumulativeDifference += monthlyDifference;
-    const lineFriends = currentLineFriends + projectedLineFriends * ramp;
     const monthlyNewLineFriends = Math.max(lineFriends - previousLineFriends, 0);
     previousLineFriends = lineFriends;
-    const directIncrease = scenario.direct * ramp;
+    const directIncrease = directIncreaseTarget * ramp;
     const withLineMonthlyRevenue = result.currentRevenue + monthlyDifference;
     const deliveryCount = getMonthlyDeliveryCount(month);
-    const estimatedReservations =
-      lineFriends * deliveryCount * deliveryReservationRate;
-    const lineReservationRevenue = estimatedReservations * currentUnitPrice;
-    const repeatRevenue = result.repeatImpact * ramp;
-    const feeSaving = result.feeSaving * ramp;
+    const monthlyCost =
+      monthlyLineOperationCost + (month === 1 ? initialLineSetupCost : 0);
+    const monthlyProfit = monthlyDifference - monthlyCost;
+    cumulativeProfit += monthlyProfit;
 
     return {
       label,
@@ -476,10 +539,17 @@ function buildProjectionRows(
       lineReservationRevenue,
       repeatRevenue,
       feeSaving,
-      repeatRatio: Math.min(currentRepeatRatio + scenario.repeat * ramp, 100),
+      unitPriceIncreaseRevenue,
+      monthlyProfit,
+      cumulativeProfit,
+      repeatRatio: Math.min(currentRepeatRatio + repeatImprovementTarget * ramp, 100),
       directRatio: Math.min(currentDirectRatio + directIncrease, 100),
       thirdPartyRatio: Math.max(currentThirdPartyRatio - directIncrease, 0),
-      unitPrice: currentUnitPrice * (1 + (scenario.unitPrice / 100) * ramp),
+      unitPrice: improvedUnitPrice,
+      isAggressive:
+        result.currentRevenue > 0
+          ? conservativeMonthlyDifference / result.currentRevenue > 0.15
+          : false,
     };
   });
 }
@@ -498,8 +568,6 @@ function buildCurrentProjection(industry: Industry, inputs: SimulationInputs, re
 }
 
 function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
-  let withLineCumulativeProfit = 0;
-
   const withLineRevenue = rows.map((row) => row.monthlyDifference);
   const monthlyNewLineFriends = rows.map((row) => row.monthlyNewLineFriends);
   const lineFriends = rows.map((row) => row.lineFriends);
@@ -511,40 +579,49 @@ function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
   const lineReservationRevenue = rows.map((row) => row.lineReservationRevenue);
   const repeatRevenue = rows.map((row) => row.repeatRevenue);
   const feeSavings = rows.map((row) => row.feeSaving);
+  const unitPriceIncreaseRevenue = rows.map((row) => row.unitPriceIncreaseRevenue);
+  const conservativeAdjustments = rows.map(
+    (row) =>
+      row.monthlyDifference -
+      row.lineReservationRevenue -
+      row.repeatRevenue -
+      row.feeSaving -
+      row.unitPriceIncreaseRevenue,
+  );
   const growthRates = rows.map((row) => row.monthlyGrowthRate);
   const initialCosts = rows.map((row) => (row.month === 1 ? initialLineSetupCost : 0));
   const operationCosts = rows.map(() => monthlyLineOperationCost);
   const totalCosts = rows.map(
     (_, index) => initialCosts[index] + operationCosts[index],
   );
-  const grossProfits = rows.map((row, index) => row.monthlyDifference - totalCosts[index]);
-  const cumulativeProfits = grossProfits.map((profit) => {
-    withLineCumulativeProfit += profit;
-    return withLineCumulativeProfit;
-  });
+  const grossProfits = rows.map((row) => row.monthlyProfit);
+  const cumulativeProfits = rows.map((row) => row.cumulativeProfit);
 
   return {
       title: "公式LINEあり",
-      subtitle: "初期設定15万円 月額運用3万円 単位：万円",
+      subtitle: "月次改善額 / 初期設定15万円・月額運用3万円 / 金額単位：万円",
       accent: "blue",
       rows: [
         {
           section: "売上げ",
-          label: "売上増合計",
+          label: "月間売上増加見込み",
           values: withLineRevenue,
           emphasis: "positive",
+          detail: "その月単体で見込まれる売上増加額です。",
         },
         {
           section: "売上げ",
           label: "月間追加登録数",
           values: monthlyNewLineFriends,
           format: "number",
+          detail: "月間宿泊者数のうち、一定割合が宿泊時・館内POP・チェックアウト時の案内などでLINE登録すると仮定しています。",
         },
         {
           section: "売上げ",
           label: "累計登録者数",
           values: lineFriends,
           format: "number",
+          detail: "前月までの累計LINE友だち数に、当月の追加登録数を加算しています。",
         },
         {
           section: "売上げ",
@@ -554,37 +631,54 @@ function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
         },
         {
           section: "売上げ",
-          label: "配信予約率",
+          label: "LINE予約転換率",
           values: deliveryReservationRates,
           format: "percent",
+          detail: "LINE登録者のうち、月間で一定割合が配信・リッチメニュー・限定プラン案内から予約につながる想定です。",
         },
         {
           section: "売上げ",
-          label: "LINE経由予約見込み",
+          label: "LINE経由の月間予約見込み",
           values: estimatedReservations,
           format: "number",
         },
         {
           section: "売上げ",
-          label: "LINE経由予約売上",
+          label: "LINE経由の月間予約売上",
           values: lineReservationRevenue,
           emphasis: "positive",
         },
         {
           section: "売上げ",
-          label: "リピーター売上増",
+          label: "リピーター率改善による売上増",
           values: repeatRevenue,
           emphasis: "positive",
+          detail: "宿泊後の接点づくりや限定案内により、再来訪につながる割合が段階的に改善すると仮定しています。",
         },
         {
           section: "売上げ",
-          label: "外部予約手数料削減",
+          label: "OTA手数料の削減見込み",
           values: feeSavings,
           emphasis: "positive",
+          detail: "OTA経由だった予約の一部が、公式サイト・LINE経由の直接予約へ転換することで削減できる手数料を試算しています。",
         },
         {
           section: "売上げ",
-          label: "売上伸び率",
+          label: "平均予約単価改善による売上増",
+          values: unitPriceIncreaseRevenue,
+          emphasis: "positive",
+          detail: "季節限定プラン、連泊プラン、アップセル提案などにより、平均予約単価の改善を見込んでいます。",
+        },
+        {
+          section: "売上げ",
+          label: "重複調整・保守係数",
+          values: conservativeAdjustments,
+          emphasis: "negative",
+          detail: "LINE経由予約、リピーター化、単価改善の重複を避けるため、標準の保守係数を反映しています。",
+        },
+        {
+          section: "売上げ",
+          label: "月間売上の改善率",
           values: growthRates,
           format: "percent",
         },
@@ -608,41 +702,69 @@ function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
         },
         {
           section: "収支",
-          label: "単月収支",
+          label: "月間収支改善",
           values: grossProfits,
           emphasis: "strong",
+          detail: "その月の月間売上増加見込みから月額運用費を差し引いた金額です。1ヶ月目のみ初期設定費も差し引きます。",
         },
         {
           section: "収支",
-          label: "累計収支",
+          label: "累計収支改善",
           values: cumulativeProfits,
           emphasis: "strong",
+          detail: "初期設定費・月額運用費を差し引いたうえで、導入から該当月までの累計効果を表示しています。",
         },
       ],
     };
 }
 
-function makeFallbackComment(result: SimulationResult): AiComment {
+function makeFallbackComment(
+  industry: Industry,
+  inputs: SimulationInputs,
+  rows: ProjectionRow[],
+): AiComment {
+  const lastProjection = rows[rows.length - 1];
+  const facilityName = String(inputs.facilityName || "貴施設");
+  const thirdPartyRatio = formatPercent(toNumber(inputs.thirdPartyRatio));
+  const currentRepeatRatio = formatPercent(toNumber(inputs.repeatRatio));
+  const currentDirectRatio = formatPercent(toNumber(inputs.directRatio));
+  const finalMonthlyRevenueIncrease = formatYen(lastProjection?.monthlyDifference || 0);
+  const finalCumulativeProfit = formatYen(lastProjection?.cumulativeProfit || 0);
+  const industryLabel =
+    industry === "hotel" ? "OTA" : industry === "golf" ? "外部予約サイト" : "グルメサイト";
+
   return {
     improvements: [
-      "受付・会計・チェックアウト時にスタッフから一言声がけし、その場で公式LINE登録を促す。",
-      "登録特典や次回予約特典を用意し、登録する理由をお客様に分かりやすく伝える。",
-      "登録後は季節案内・空き枠案内・限定プランを配信し、再来店や再来場のきっかけを作る。",
-      "OTA・外部予約サイト経由のお客様にも、次回は公式予約が便利だと案内して直接予約へつなげる。",
+      "宿泊時・チェックアウト時のスタッフ声かけを強化",
+      "登録特典として宿泊割引・館内利用特典・ポイント付与を用意",
+      "館内POP・客室内案内・フロント周辺にQRコードを設置",
+      "月2〜4回、季節プラン・直前空室・連泊プランを配信",
+      "LINE経由予約数・登録数・配信反応を毎月確認し改善",
     ],
-    priorityMeasures: result.priority.slice(0, 3),
+    priorityMeasures: [
+      "LINE登録導線の整備",
+      "登録特典の設計",
+      "リピーター向け配信の開始",
+      "公式予約・直接予約への誘導強化",
+    ],
     commoActions: [
-      "公式LINEアカウントの立ち上げと友だち登録導線の設計",
-      "現場スタッフが使える声がけトークと登録案内POPの設計",
-      "セグメント配信による再来訪促進",
-      "OTA経由のお客様を公式予約へ戻す導線設計",
-      "配信結果と予約状況を見ながら改善",
+      "スタッフ向けのLINE登録案内トークを作成",
+      "館内POP・QRコード付き案内物を作成",
+      "初回登録特典を設計",
+      "月次配信カレンダーを作成",
+      "配信結果をもとに改善提案を実施",
     ],
-    salesTalk: `今回の数値で見ると、月間 ${formatYen(
-      result.monthlyImpact,
-    )}、年間 ${formatYen(
-      result.annualImpact,
-    )} 程度の改善余地があります。まずは新しく公式LINEを立ち上げ、来店・宿泊・来場したお客様が登録しやすい導線を作るところから始めるのが現実的です。commo.なら、アカウント設計から登録導線、配信、改善確認まで一緒に進められます。`,
+    salesTalk: `${facilityName}様は、${industryLabel}予約比率が${thirdPartyRatio}で、外部予約経由の集客に依存している状態です。そのため、公式LINEを活用して宿泊後のお客様と継続的につながり、再来訪や公式予約への転換を増やすことで、手数料の削減と売上改善が期待できます。
+
+今回の試算では、12ヶ月後にLINE友だち数が${formatNumber(
+      lastProjection?.lineFriends || 0,
+    )}人、リピーター率が${currentRepeatRatio}から${formatPercent(
+      lastProjection?.repeatRatio || 0,
+    )}、公式・自社予約率が${currentDirectRatio}から${formatPercent(
+      lastProjection?.directRatio || 0,
+    )}へ改善する想定です。その結果、12ヶ月目には月間${finalMonthlyRevenueIncrease}の売上増加、12ヶ月累計では${finalCumulativeProfit}の収支改善が見込まれます。
+
+まずは宿泊時のLINE登録促進、館内POP設置、宿泊後の限定プラン配信から始めることで、段階的に外部予約依存を下げていくことができます。`,
   };
 }
 
@@ -676,6 +798,7 @@ export default function EstimateSimulator() {
     [activeIndustry, inputs, result],
   );
   const oneYearProjection = projectionRows[11];
+  const shouldShowAggressiveNote = oneYearProjection?.isAggressive;
   const visibleIndustryOptions = industry
     ? industryOptions.filter((option) => option.id === industry)
     : industryOptions;
@@ -739,6 +862,10 @@ export default function EstimateSimulator() {
             deliveryReservationRate: row.deliveryReservationRate,
             estimatedReservations: row.estimatedReservations,
             lineReservationRevenue: row.lineReservationRevenue,
+            repeatRatio: row.repeatRatio,
+            directRatio: row.directRatio,
+            unitPrice: row.unitPrice,
+            cumulativeProfit: row.cumulativeProfit,
             monthlyDifference: row.monthlyDifference,
           })),
         }),
@@ -751,7 +878,7 @@ export default function EstimateSimulator() {
       const data = (await response.json()) as AiComment;
       setAiComment(data);
     } catch (caughtError) {
-      setAiComment(makeFallbackComment(result));
+      setAiComment(makeFallbackComment(activeIndustry, inputs, projectionRows));
       setError(
         caughtError instanceof Error
           ? caughtError.message
@@ -1059,33 +1186,78 @@ export default function EstimateSimulator() {
             </div>
 
             <div className="border-b border-black/8 bg-[#fbfbfc] px-5 py-3">
-              <p className="text-xs leading-6 text-black/50">
-                このシミュレーション結果は、入力いただいた数値をもとにした目安です。実際の売上・予約数・費用対効果を保証するものではありません。
+              <p className="text-xs leading-6 text-black/55">
+                各月の売上増加見込みは、その月単体で見込まれる改善額です。累計収支改善は、初期設定費・月額運用費を差し引いたうえで、導入から該当月までの累計効果を表示しています。
               </p>
+              <p className="mt-1 text-xs leading-6 text-black/45">
+                本シミュレーションは、入力数値と一定の改善率をもとにした試算です。実際の成果は、LINE登録導線、配信内容、季節要因、プラン内容、施設の予約状況によって変動します。
+              </p>
+              {shouldShowAggressiveNote ? (
+                <p className="mt-1 text-xs leading-6 text-[#9f1239]">
+                  この試算はやや積極的な改善想定です。実際の運用では、登録導線・配信内容・季節要因によって変動します。
+                </p>
+              ) : null}
+            </div>
+
+            <div className="grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-5">
+              <KpiShift
+                label="12ヶ月後のLINE友だち数"
+                before={`${formatNumber(currentProjection.lineFriends)}人`}
+                after={`${formatNumber(oneYearProjection.lineFriends)}人`}
+              />
+              <KpiShift
+                label="12ヶ月後のリピーター率"
+                before={formatPercent(currentProjection.repeatRatio)}
+                after={formatPercent(oneYearProjection.repeatRatio)}
+              />
+              <KpiShift
+                label="12ヶ月後の公式・自社予約率"
+                before={formatPercent(currentProjection.directRatio)}
+                after={formatPercent(oneYearProjection.directRatio)}
+              />
+              <KpiShift
+                label="12ヶ月後の平均予約単価"
+                before={formatYen(currentProjection.unitPrice)}
+                after={formatYen(oneYearProjection.unitPrice)}
+              />
+              <KpiShift
+                label="12ヶ月累計収支改善"
+                before="導入前 0円"
+                after={formatYen(oneYearProjection.cumulativeProfit)}
+              />
             </div>
 
             <div className="overflow-x-auto bg-[#f7f8fa] p-4">
               <SpreadsheetBlock block={sheetBlock} />
             </div>
 
+            <div className="border-t border-black/8 bg-white px-5 py-3">
+              <p className="text-xs leading-6 text-black/45">
+                月間宿泊者数のうち、一定割合が宿泊時・チェックアウト時・館内POPなどを通じてLINE登録すると仮定しています。LINE登録者のうち、月間で一定割合が配信やリッチメニュー経由で予約につながる想定です。
+              </p>
+              <p className="mt-1 text-xs leading-6 text-black/45">
+                季節限定プラン・連泊プラン・アップセル・直前割に頼らない価値訴求配信により、平均予約単価の改善を見込んでいます。初月は初期設定費を含むため、一時的にマイナス表示になる場合があります。
+              </p>
+            </div>
+
             <div className="grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-4">
               <KpiShift
-                label="導入後のLINE友だち数"
+                label="12ヶ月後のLINE友だち数"
                 before={`${formatNumber(currentProjection.lineFriends)}人`}
                 after={`${formatNumber(oneYearProjection.lineFriends)}人`}
               />
               <KpiShift
-                label="リピーター率"
+                label="リピーター率の改善見込み"
                 before={formatPercent(currentProjection.repeatRatio)}
                 after={formatPercent(oneYearProjection.repeatRatio)}
               />
               <KpiShift
-                label="公式・自社予約率"
+                label="公式・自社予約率の改善見込み"
                 before={formatPercent(currentProjection.directRatio)}
                 after={formatPercent(oneYearProjection.directRatio)}
               />
               <KpiShift
-                label="平均単価"
+                label="平均予約単価の改善見込み"
                 before={formatYen(currentProjection.unitPrice)}
                 after={formatYen(oneYearProjection.unitPrice)}
               />
@@ -1212,12 +1384,20 @@ function SpreadsheetBlock({ block }: { block: SheetBlock }) {
                     : ""}
                 </td>
                 <td
+                  title={row.detail}
                   className={[
                     "w-52 border border-black/30 bg-white px-2 py-2",
-                    row.emphasis === "strong" ? "font-semibold" : "",
+                    row.emphasis === "strong" || row.emphasis === "positive"
+                      ? "font-semibold"
+                      : "",
                   ].join(" ")}
                 >
-                  {row.label}
+                  <span>{row.label}</span>
+                  {row.detail ? (
+                    <span className="ml-1 text-[10px] font-medium text-black/35">
+                      ※
+                    </span>
+                  ) : null}
                 </td>
                 {row.values.map((value, index) => (
                   <td
@@ -1227,7 +1407,9 @@ function SpreadsheetBlock({ block }: { block: SheetBlock }) {
                       "bg-white",
                       row.emphasis === "strong" ? "font-bold" : "",
                       value < 0 ? "text-red-600" : "",
-                      value > 0 && row.emphasis === "positive" ? "text-[#12657d]" : "",
+                      value > 0 && (row.emphasis === "positive" || row.emphasis === "strong")
+                        ? "text-[#12657d]"
+                        : "",
                     ].join(" ")}
                   >
                     {value > 0 && row.emphasis === "positive" && row.format !== "percent"

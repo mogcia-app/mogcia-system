@@ -11,7 +11,7 @@ const simulationItems = [
     label: "公式LINE導入シミュレーション",
     href: "/simulation/commo",
     icon: MessageCircle,
-    body: "公式LINEを導入した場合に、友だち追加・配信・予約・リピーター化・外部予約手数料削減がどう変わるかを試算します。",
+    body: "公式LINEを導入した場合に、友だち追加・配信・予約・リピーター化・OTA手数料削減がどう変わるかを試算します。",
   },
   {
     title: "HP",

@@ -75,6 +75,18 @@ function getLastValue(savedSimulation: SavedSimulation, label: string) {
   return row?.values.at(-1) ?? 0;
 }
 
+function getLastValueByLabels(savedSimulation: SavedSimulation, labels: string[]) {
+  for (const label of labels) {
+    const value = getLastValue(savedSimulation, label);
+
+    if (value !== 0) {
+      return value;
+    }
+  }
+
+  return 0;
+}
+
 export default function SimulationHistoryList() {
   const [history, setHistory] = useState<SavedSimulation[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
@@ -154,11 +166,14 @@ export default function SimulationHistoryList() {
 
       <div className="space-y-4">
         {sortedHistory.map((savedSimulation) => {
-          const cumulativeProfit = getLastValue(savedSimulation, "累計収支");
-          const estimatedReservations = getLastValue(
-            savedSimulation,
+          const cumulativeProfit = getLastValueByLabels(savedSimulation, [
+            "累計収支改善",
+            "累計収支",
+          ]);
+          const estimatedReservations = getLastValueByLabels(savedSimulation, [
+            "LINE経由の月間予約見込み",
             "LINE経由予約見込み",
-          );
+          ]);
           const lineFriends = getLastValue(savedSimulation, "累計登録者数");
           const deliveryCount = getLastValue(savedSimulation, "月間配信回数");
 
