@@ -311,6 +311,8 @@ const getLineRegistrationBasis = (
     getMonthlyCustomers(industry, inputs),
   )}人 × LINE登録率${scenario.line.toFixed(1)}%で試算しています。`;
 
+const formatManYenLabel = (value: number) => `${formatNumber(value / 10000)}万円`;
+
 const formatSheetValue = (value: number, format: SheetRow["format"] = "yen") => {
   if (format === "percent") {
     return `${value.toFixed(1)}%`;
@@ -1287,6 +1289,12 @@ export default function EstimateSimulator() {
               </p>
             </div>
 
+            <CalculationBasisBox
+              industry={activeIndustry}
+              inputs={inputs}
+              scenario={scenario}
+            />
+
             <div className="grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-4">
               <KpiShift
                 label="12ヶ月後のLINE友だち数"
@@ -1471,6 +1479,59 @@ function SpreadsheetBlock({ block }: { block: SheetBlock }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function CalculationBasisBox({
+  industry,
+  inputs,
+  scenario,
+}: {
+  industry: Industry;
+  inputs: SimulationInputs;
+  scenario: Record<ScenarioKey, number>;
+}) {
+  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
+  const lineRegistrationRate = scenario.line;
+  const lineReservationRate = deliveryReservationRateByIndustry[industry] * 100;
+
+  return (
+    <section className="border-t border-black/8 bg-[#f7f8fa] px-5 py-5">
+      <div className="border border-black/8 bg-white px-4 py-4">
+        <h3 className="text-sm font-semibold text-black/75">
+          計算根拠について
+        </h3>
+        <div className="mt-3 space-y-3 text-xs leading-7 text-black/58">
+          <p>
+            本シミュレーションは、月間宿泊者数・平均宿泊単価・OTA予約比率・リピーター率などの入力値をもとに、公式LINE導入後の改善可能性を試算したものです。
+          </p>
+          <p>
+            月間LINE友だち追加数は、月間宿泊者数{formatNumber(
+              monthlyCustomers,
+            )}人の約{lineRegistrationRate.toFixed(
+              1,
+            )}%が宿泊時・チェックアウト時・館内POPなどを通じてLINE登録すると仮定しています。LINE経由予約は、累計LINE友だち数のうち月間{lineReservationRate.toFixed(
+              1,
+            )}%が予約につながる想定です。
+          </p>
+          <p>
+            月間売上増加見込みは、LINE経由予約売上、リピーター率改善による売上増、平均予約単価改善による売上増、OTA手数料削減見込みをもとに算出し、効果が重複しすぎないよう調整しています。
+          </p>
+          <p>
+            月間収支改善は、月間売上増加見込みから月額運用費{formatManYenLabel(
+              monthlyLineOperationCost,
+            )}を差し引いた金額です。累計収支改善は、初期設定費{formatManYenLabel(
+              initialLineSetupCost,
+            )}・月額運用費{formatManYenLabel(
+              monthlyLineOperationCost,
+            )}を差し引いたうえで、導入から該当月までの累計効果を表示しています。
+          </p>
+          <p className="font-medium text-black/72">
+            本結果は入力値をもとにした試算であり、売上・予約数・費用対効果を保証するものではありません。
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 
