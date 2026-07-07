@@ -302,6 +302,15 @@ const formatDecimalNumber = (value: number, digits = 1) =>
 const formatApproxManYen = (value: number) =>
   `約${formatNumber(value / 10000)}万円`;
 
+const getLineRegistrationBasis = (
+  industry: Industry,
+  inputs: SimulationInputs,
+  scenario: Record<ScenarioKey, number>,
+) =>
+  `月間追加登録数は、月間宿泊者数${formatNumber(
+    getMonthlyCustomers(industry, inputs),
+  )}人 × LINE登録率${scenario.line.toFixed(1)}%で試算しています。`;
+
 const formatSheetValue = (value: number, format: SheetRow["format"] = "yen") => {
   if (format === "percent") {
     return `${value.toFixed(1)}%`;
@@ -427,7 +436,10 @@ function calculateSimulation(
     { label: "LINE登録導線の強化", value: lineImpact },
     { label: "リピーター施策の強化", value: repeatImpact },
     { label: "自社予約・直接予約への転換", value: directImpact },
-    { label: "客単価アップ施策", value: unitPriceImpact },
+    {
+      label: "客単価アップ施策（連泊プラン・季節限定プランの活用）",
+      value: unitPriceImpact,
+    },
   ]
     .sort((a, b) => b.value - a.value)
     .map((item) => item.label);
@@ -592,8 +604,6 @@ function buildSheetBlock(
   inputs: SimulationInputs,
   scenario: Record<ScenarioKey, number>,
 ): SheetBlock {
-  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
-  const lineRegistrationRate = scenario.line;
   const lineReservationRate = deliveryReservationRateByIndustry[industry] * 100;
   const withLineRevenue = rows.map((row) => row.monthlyDifference);
   const monthlyNewLineFriends = rows.map((row) => row.monthlyNewLineFriends);
@@ -641,9 +651,7 @@ function buildSheetBlock(
           label: "月間追加登録数",
           values: monthlyNewLineFriends,
           format: "number",
-          detail: `月間追加登録数は、月間宿泊者数${formatNumber(
-            monthlyCustomers,
-          )}人 × LINE登録率${lineRegistrationRate.toFixed(1)}%で試算しています。`,
+          detail: getLineRegistrationBasis(industry, inputs, scenario),
         },
         {
           section: "売上げ",
@@ -800,9 +808,9 @@ function makeFallbackComment(
       lastProjection?.repeatRatio || 0,
     )}、公式・自社予約率が${currentDirectRatio}から${formatPercent(
       lastProjection?.directRatio || 0,
-    )}へ改善する想定です。12ヶ月目には月間売上増加が${finalMonthlyRevenueIncrease}、月間収支改善が${finalMonthlyProfit}、12ヶ月累計収支改善が${finalCumulativeProfit}と見込まれます。
+    )}へ改善する想定です。12ヶ月後には月間${finalMonthlyRevenueIncrease}の売上増加、月間収支改善は${finalMonthlyProfit}、12ヶ月累計で${finalCumulativeProfit}の収支改善を見込んでいます。
 
-まずは宿泊時のスタッフ声かけ、館内POP・QRコード設置、登録特典の設計、季節プランや連泊プランの月次配信から始めることで、段階的に外部予約依存を下げていくことができます。`,
+まずは、スタッフの声かけ、館内POP内のQRコード設置、登録特典の用意から始め、季節プランや空室案内の配信でリピーター施策を強化していきましょう。`,
   };
 }
 
@@ -1271,7 +1279,8 @@ export default function EstimateSimulator() {
 
             <div className="border-t border-black/8 bg-white px-5 py-3">
               <p className="text-xs leading-6 text-black/45">
-                月間宿泊者数のうち、一定割合が宿泊時・チェックアウト時・館内POPなどを通じてLINE登録すると仮定しています。LINE登録者のうち、月間で一定割合が配信やリッチメニュー経由で予約につながる想定です。
+                {getLineRegistrationBasis(activeIndustry, inputs, scenario)}
+                LINE登録者のうち、月間で一定割合が配信やリッチメニュー経由で予約につながる想定です。
               </p>
               <p className="mt-1 text-xs leading-6 text-black/45">
                 季節限定プラン・連泊プラン・アップセル・直前割に頼らない価値訴求配信により、平均予約単価の改善を見込んでいます。初月は初期設定費を含むため、一時的にマイナス表示になる場合があります。

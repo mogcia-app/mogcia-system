@@ -47,6 +47,19 @@ const formatApproxManYen = (value: number) =>
 const ensureArray = (value: unknown) =>
   Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 
+const sanitizeText = (value: string) =>
+  value
+    .replaceAll("commo.の公式LINE導入により", "公式LINE導入により")
+    .replaceAll("特別割引", "限定特典")
+    .replaceAll("ご不明点があればお手伝いいたします。", "")
+    .trim();
+
+const sanitizeArray = (value: unknown, fallback: string[]) => {
+  const items = ensureArray(value).map(sanitizeText).filter(Boolean);
+
+  return items.length ? items : fallback;
+};
+
 function getFacilityDisplayName(inputs: AnalyzePayload["inputs"]) {
   const facilityName = String(inputs.facilityName || "").trim();
 
@@ -104,15 +117,17 @@ function fallbackAnalyze(payload: AnalyzePayload): AiComment {
       repeatRatio,
     )}%から${finalRepeatRatio}%、公式・自社予約率が${Math.round(
       directRatio,
-    )}%から${finalDirectRatio}%へ改善する想定です。12ヶ月目には月間売上増加が${formatApproxManYen(
-      finalMonthlyDifference,
-    )}、月間収支改善が${formatApproxManYen(
-      finalMonthlyProfit,
-    )}、12ヶ月累計収支改善が${formatApproxManYen(
-      finalCumulativeProfit,
-    )}と見込まれます。
+    )}%から${finalDirectRatio}%へ改善する想定です。
 
-まずは宿泊時のスタッフ声かけ、館内POP・QRコード設置、登録特典の設計、季節プランや連泊プランの月次配信から始めることで、段階的に外部予約依存を下げていくことができます。`,
+12ヶ月後には月間${formatApproxManYen(
+      finalMonthlyDifference,
+    )}の売上増加、月間収支改善は${formatApproxManYen(
+      finalMonthlyProfit,
+    )}、12ヶ月累計で${formatApproxManYen(
+      finalCumulativeProfit,
+    )}の収支改善を見込んでいます。
+
+まずは、スタッフの声かけ、館内POP内のQRコード設置、登録特典の用意から始め、季節プランや空室案内の配信でリピーター施策を強化していきましょう。`,
   };
 }
 
@@ -124,19 +139,10 @@ function normalizeAiComment(value: unknown, fallback: AiComment): AiComment {
   const record = value as Record<string, unknown>;
 
   return {
-    improvements: ensureArray(record.improvements).length
-      ? ensureArray(record.improvements)
-      : fallback.improvements,
-    priorityMeasures: ensureArray(record.priorityMeasures).length
-      ? ensureArray(record.priorityMeasures)
-      : fallback.priorityMeasures,
-    commoActions: ensureArray(record.commoActions).length
-      ? ensureArray(record.commoActions)
-      : fallback.commoActions,
-    salesTalk:
-      typeof record.salesTalk === "string"
-        ? record.salesTalk.replaceAll("commo.の公式LINE導入により", "公式LINE導入により")
-        : fallback.salesTalk,
+    improvements: sanitizeArray(record.improvements, fallback.improvements),
+    priorityMeasures: sanitizeArray(record.priorityMeasures, fallback.priorityMeasures),
+    commoActions: sanitizeArray(record.commoActions, fallback.commoActions),
+    salesTalk: fallback.salesTalk,
   };
 }
 
@@ -161,7 +167,7 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "あなたはcommo.の営業支援AIです。ホテル・ゴルフ場・飲食店向けに、公式LINE導入後の収支シミュレーションを踏まえ、OTAや外部予約サイトで集客した顧客を公式LINEでリピーター化し、次回以降の公式予約へつなげる提案を日本語で簡潔に作成してください。施設名が入力されている場合は「施設名＋様」を使い、「貴ホテル」は使わないでください。salesTalkは商談時にそのまま読める短めの文章にし、現状の課題、公式LINE導入でできること、12ヶ月後の改善見込み、月間売上増加・月間収支改善・累計収支改善、まず取り組むべき施策の順で構成してください。LINE経由の直接予約だけでなく、リピーター化・平均予約単価改善・公式予約誘導も含めて効果を見ていることを明記してください。「commo.の公式LINE導入により」は使わず、「公式LINE導入により」または「commo.を活用した公式LINE導入により」と書いてください。「年間で約◯円の売上増加」とは書かず、「12ヶ月目には月間約◯万円の売上増加、月間収支改善は約◯万円、12ヶ月累計収支改善は約◯万円」と売上増加と収支改善を分けてください。改善提案には、スタッフ声かけ、館内POP・QRコード、登録特典、季節プラン・空室案内・連泊プラン配信、公式・LINE経由予約への段階的誘導を含めてください。必ずJSONのみを返してください。",
+              "あなたはcommo.の営業支援AIです。ホテル・ゴルフ場・飲食店向けに、公式LINE導入後の収支シミュレーションを踏まえ、OTAや外部予約サイトで集客した顧客を公式LINEでリピーター化し、次回以降の公式予約へつなげる提案を日本語で簡潔に作成してください。施設名が入力されている場合は「施設名＋様」を使い、「貴ホテル」は使わないでください。「commo.の公式LINE導入により」は使わず、「公式LINE導入により」または「commo.を活用した公式LINE導入により」と書いてください。「特別割引」は使わず、「限定特典」または「季節限定プラン」を使ってください。末尾に「ご不明点があればお手伝いいたします。」は入れないでください。改善提案には、スタッフ声かけ、館内POP・QRコード、登録特典、季節プラン・空室案内・連泊プラン配信、公式・LINE経由予約への段階的誘導を含めてください。必ずJSONのみを返してください。",
           },
           {
             role: "user",
