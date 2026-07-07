@@ -31,24 +31,32 @@ type AnalyzePayload = {
     directRatio?: number;
     unitPrice?: number;
     cumulativeProfit?: number;
+    monthlyProfit?: number;
     monthlyDifference: number;
   }>;
 };
 
-const formatYen = (value: number) =>
+const formatNumber = (value: number) =>
   new Intl.NumberFormat("ja-JP", {
-    style: "currency",
-    currency: "JPY",
     maximumFractionDigits: 0,
   }).format(Math.round(value));
+
+const formatApproxManYen = (value: number) =>
+  `約${formatNumber(value / 10000)}万円`;
 
 const ensureArray = (value: unknown) =>
   Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
 
+function getFacilityDisplayName(inputs: AnalyzePayload["inputs"]) {
+  const facilityName = String(inputs.facilityName || "").trim();
+
+  return facilityName ? `${facilityName}様` : "貴施設";
+}
+
 function fallbackAnalyze(payload: AnalyzePayload): AiComment {
   const lastProjection = payload.projectionRows?.[payload.projectionRows.length - 1];
   const deliveryCount = lastProjection?.deliveryCount || 4;
-  const facilityName = String(payload.inputs.facilityName || "貴施設");
+  const facilityName = getFacilityDisplayName(payload.inputs);
   const externalSiteLabel =
     payload.industry === "hotel"
       ? "OTA"
@@ -62,6 +70,8 @@ function fallbackAnalyze(payload: AnalyzePayload): AiComment {
   const finalRepeatRatio = Math.round(lastProjection?.repeatRatio || repeatRatio);
   const finalDirectRatio = Math.round(lastProjection?.directRatio || directRatio);
   const finalMonthlyDifference = lastProjection?.monthlyDifference || payload.result.monthlyImpact;
+  const finalMonthlyProfit =
+    lastProjection?.monthlyProfit ?? finalMonthlyDifference - 30000;
   const finalCumulativeProfit =
     lastProjection?.cumulativeProfit ?? finalMonthlyDifference * 12 - 510000;
 
@@ -86,21 +96,23 @@ function fallbackAnalyze(payload: AnalyzePayload): AiComment {
       "月次配信カレンダーを作成",
       "配信結果をもとに改善提案を実施",
     ],
-    salesTalk: `${facilityName}様は、${externalSiteLabel}予約比率が${Math.round(
+    salesTalk: `${facilityName}は、${externalSiteLabel}予約比率が${Math.round(
       thirdPartyRatio,
-    )}%と高く、予約獲得の多くを外部サイトに依存している状態です。そのため、公式LINEを活用して宿泊後のお客様と継続的につながり、再来訪や公式予約への転換を増やすことで、手数料の削減と売上改善が期待できます。
+    )}%と高く、予約獲得の多くを外部サイトに依存している状態です。公式LINE導入により、宿泊後のお客様と継続的につながり、次回予約や公式予約への誘導を強化できます。本試算では、LINE経由の直接予約だけでなく、宿泊後の再来訪促進や平均予約単価の改善も含めて効果を見ています。
 
-今回の試算では、12ヶ月後にLINE友だち数が${finalLineFriends}人、リピーター率が${Math.round(
+12ヶ月後は、LINE友だち数が${finalLineFriends}人、リピーター率が${Math.round(
       repeatRatio,
     )}%から${finalRepeatRatio}%、公式・自社予約率が${Math.round(
       directRatio,
-    )}%から${finalDirectRatio}%へ改善する想定です。その結果、12ヶ月目には月間${formatYen(
+    )}%から${finalDirectRatio}%へ改善する想定です。12ヶ月目には月間売上増加が${formatApproxManYen(
       finalMonthlyDifference,
-    )}の売上増加、12ヶ月累計では${formatYen(
+    )}、月間収支改善が${formatApproxManYen(
+      finalMonthlyProfit,
+    )}、12ヶ月累計収支改善が${formatApproxManYen(
       finalCumulativeProfit,
-    )}の収支改善が見込まれます。
+    )}と見込まれます。
 
-まずは宿泊時のLINE登録促進、館内POP設置、宿泊後の限定プラン配信から始めることで、段階的に外部予約依存を下げていくことができます。`,
+まずは宿泊時のスタッフ声かけ、館内POP・QRコード設置、登録特典の設計、季節プランや連泊プランの月次配信から始めることで、段階的に外部予約依存を下げていくことができます。`,
   };
 }
 
@@ -122,7 +134,9 @@ function normalizeAiComment(value: unknown, fallback: AiComment): AiComment {
       ? ensureArray(record.commoActions)
       : fallback.commoActions,
     salesTalk:
-      typeof record.salesTalk === "string" ? record.salesTalk : fallback.salesTalk,
+      typeof record.salesTalk === "string"
+        ? record.salesTalk.replaceAll("commo.の公式LINE導入により", "公式LINE導入により")
+        : fallback.salesTalk,
   };
 }
 
@@ -147,7 +161,7 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "あなたはcommo.の営業支援AIです。ホテル・ゴルフ場・飲食店向けに、公式LINE導入後の収支シミュレーションを踏まえ、OTAや外部予約サイトで集客した顧客を公式LINEでリピーター化し、次回以降の公式予約へつなげる提案を日本語で簡潔に作成してください。salesTalkは、1. 現状の課題、2. 導入後の見込み、3. 実施すべき施策の順で、入力値とprojectionRowsの12ヶ月目の数値を必ず反映してください。「年間で約◯円の売上増加」とは書かず、「12ヶ月目には月間約◯円の売上増加、12ヶ月累計では約◯円の収支改善」と売上増加と収支改善を分けてください。改善提案には、スタッフ声かけ、館内POP・QRコード、登録特典、季節プラン・空室案内・連泊プラン配信、公式・LINE経由予約への段階的誘導を含めてください。必ずJSONのみを返してください。",
+              "あなたはcommo.の営業支援AIです。ホテル・ゴルフ場・飲食店向けに、公式LINE導入後の収支シミュレーションを踏まえ、OTAや外部予約サイトで集客した顧客を公式LINEでリピーター化し、次回以降の公式予約へつなげる提案を日本語で簡潔に作成してください。施設名が入力されている場合は「施設名＋様」を使い、「貴ホテル」は使わないでください。salesTalkは商談時にそのまま読める短めの文章にし、現状の課題、公式LINE導入でできること、12ヶ月後の改善見込み、月間売上増加・月間収支改善・累計収支改善、まず取り組むべき施策の順で構成してください。LINE経由の直接予約だけでなく、リピーター化・平均予約単価改善・公式予約誘導も含めて効果を見ていることを明記してください。「commo.の公式LINE導入により」は使わず、「公式LINE導入により」または「commo.を活用した公式LINE導入により」と書いてください。「年間で約◯円の売上増加」とは書かず、「12ヶ月目には月間約◯万円の売上増加、月間収支改善は約◯万円、12ヶ月累計収支改善は約◯万円」と売上増加と収支改善を分けてください。改善提案には、スタッフ声かけ、館内POP・QRコード、登録特典、季節プラン・空室案内・連泊プラン配信、公式・LINE経由予約への段階的誘導を含めてください。必ずJSONのみを返してください。",
           },
           {
             role: "user",

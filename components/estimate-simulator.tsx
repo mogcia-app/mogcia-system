@@ -68,7 +68,7 @@ type SheetRow = {
   label: string;
   values: number[];
   emphasis?: "positive" | "negative" | "strong";
-  format?: "yen" | "number" | "percent";
+  format?: "yen" | "number" | "percent" | "manYenDecimal";
   detail?: string;
 };
 
@@ -293,6 +293,15 @@ const formatNumber = (value: number) =>
     maximumFractionDigits: 0,
   }).format(Math.round(value));
 
+const formatDecimalNumber = (value: number, digits = 1) =>
+  new Intl.NumberFormat("ja-JP", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
+
+const formatApproxManYen = (value: number) =>
+  `約${formatNumber(value / 10000)}万円`;
+
 const formatSheetValue = (value: number, format: SheetRow["format"] = "yen") => {
   if (format === "percent") {
     return `${value.toFixed(1)}%`;
@@ -300,6 +309,10 @@ const formatSheetValue = (value: number, format: SheetRow["format"] = "yen") => 
 
   if (format === "number") {
     return formatNumber(value);
+  }
+
+  if (format === "manYenDecimal") {
+    return `${formatDecimalNumber(value / 10000)}万円`;
   }
 
   const rounded = Math.round(value / 10000);
@@ -319,6 +332,12 @@ function getIssueSummary(inputs: SimulationInputs) {
   const issues = [...selectedIssues, freeText].filter(Boolean);
 
   return issues.length ? issues.join("、") : "";
+}
+
+function getFacilityDisplayName(inputs: SimulationInputs) {
+  const facilityName = String(inputs.facilityName || "").trim();
+
+  return facilityName ? `${facilityName}様` : "貴施設";
 }
 
 function getAverageUnitPrice(industry: Industry, inputs: SimulationInputs) {
@@ -567,7 +586,15 @@ function buildCurrentProjection(industry: Industry, inputs: SimulationInputs, re
   };
 }
 
-function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
+function buildSheetBlock(
+  rows: ProjectionRow[],
+  industry: Industry,
+  inputs: SimulationInputs,
+  scenario: Record<ScenarioKey, number>,
+): SheetBlock {
+  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
+  const lineRegistrationRate = scenario.line;
+  const lineReservationRate = deliveryReservationRateByIndustry[industry] * 100;
   const withLineRevenue = rows.map((row) => row.monthlyDifference);
   const monthlyNewLineFriends = rows.map((row) => row.monthlyNewLineFriends);
   const lineFriends = rows.map((row) => row.lineFriends);
@@ -614,7 +641,9 @@ function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
           label: "月間追加登録数",
           values: monthlyNewLineFriends,
           format: "number",
-          detail: "月間宿泊者数のうち、一定割合が宿泊時・館内POP・チェックアウト時の案内などでLINE登録すると仮定しています。",
+          detail: `月間追加登録数は、月間宿泊者数${formatNumber(
+            monthlyCustomers,
+          )}人 × LINE登録率${lineRegistrationRate.toFixed(1)}%で試算しています。`,
         },
         {
           section: "売上げ",
@@ -641,6 +670,9 @@ function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
           label: "LINE経由の月間予約見込み",
           values: estimatedReservations,
           format: "number",
+          detail: `LINE経由の月間予約見込みは、累計LINE友だち数 × LINE予約転換率${lineReservationRate.toFixed(
+            1,
+          )}%で試算しています。`,
         },
         {
           section: "売上げ",
@@ -660,6 +692,7 @@ function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
           label: "OTA手数料の削減見込み",
           values: feeSavings,
           emphasis: "positive",
+          format: "manYenDecimal",
           detail: "OTA経由だった予約の一部が、公式サイト・LINE経由の直接予約へ転換することで削減できる手数料を試算しています。",
         },
         {
@@ -671,10 +704,10 @@ function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
         },
         {
           section: "売上げ",
-          label: "重複調整・保守係数",
+          label: "重複分の調整",
           values: conservativeAdjustments,
           emphasis: "negative",
-          detail: "LINE経由予約、リピーター化、単価改善の重複を避けるため、標準の保守係数を反映しています。",
+          detail: "LINE経由予約・リピーター売上・単価改善が重なって計算されすぎないよう、控えめに調整しています。",
         },
         {
           section: "売上げ",
@@ -705,7 +738,7 @@ function buildSheetBlock(rows: ProjectionRow[]): SheetBlock {
           label: "月間収支改善",
           values: grossProfits,
           emphasis: "strong",
-          detail: "その月の月間売上増加見込みから月額運用費を差し引いた金額です。1ヶ月目のみ初期設定費も差し引きます。",
+          detail: "その月の月間売上増加見込みから月額運用費を差し引いた金額です。初月は初期設定費を含むため、一時的にマイナス表示になる場合があります。",
         },
         {
           section: "収支",
@@ -724,12 +757,17 @@ function makeFallbackComment(
   rows: ProjectionRow[],
 ): AiComment {
   const lastProjection = rows[rows.length - 1];
-  const facilityName = String(inputs.facilityName || "貴施設");
+  const facilityName = getFacilityDisplayName(inputs);
   const thirdPartyRatio = formatPercent(toNumber(inputs.thirdPartyRatio));
   const currentRepeatRatio = formatPercent(toNumber(inputs.repeatRatio));
   const currentDirectRatio = formatPercent(toNumber(inputs.directRatio));
-  const finalMonthlyRevenueIncrease = formatYen(lastProjection?.monthlyDifference || 0);
-  const finalCumulativeProfit = formatYen(lastProjection?.cumulativeProfit || 0);
+  const finalMonthlyRevenueIncrease = formatApproxManYen(
+    lastProjection?.monthlyDifference || 0,
+  );
+  const finalMonthlyProfit = formatApproxManYen(lastProjection?.monthlyProfit || 0);
+  const finalCumulativeProfit = formatApproxManYen(
+    lastProjection?.cumulativeProfit || 0,
+  );
   const industryLabel =
     industry === "hotel" ? "OTA" : industry === "golf" ? "外部予約サイト" : "グルメサイト";
 
@@ -754,17 +792,17 @@ function makeFallbackComment(
       "月次配信カレンダーを作成",
       "配信結果をもとに改善提案を実施",
     ],
-    salesTalk: `${facilityName}様は、${industryLabel}予約比率が${thirdPartyRatio}で、外部予約経由の集客に依存している状態です。そのため、公式LINEを活用して宿泊後のお客様と継続的につながり、再来訪や公式予約への転換を増やすことで、手数料の削減と売上改善が期待できます。
+    salesTalk: `${facilityName}は、${industryLabel}予約比率が${thirdPartyRatio}で、外部予約経由の集客に依存している状態です。公式LINE導入により、宿泊後のお客様と継続的につながり、次回予約や公式予約への誘導を強化できます。本試算では、LINE経由の直接予約だけでなく、宿泊後の再来訪促進や平均予約単価の改善も含めて効果を見ています。
 
-今回の試算では、12ヶ月後にLINE友だち数が${formatNumber(
+12ヶ月後は、LINE友だち数が${formatNumber(
       lastProjection?.lineFriends || 0,
     )}人、リピーター率が${currentRepeatRatio}から${formatPercent(
       lastProjection?.repeatRatio || 0,
     )}、公式・自社予約率が${currentDirectRatio}から${formatPercent(
       lastProjection?.directRatio || 0,
-    )}へ改善する想定です。その結果、12ヶ月目には月間${finalMonthlyRevenueIncrease}の売上増加、12ヶ月累計では${finalCumulativeProfit}の収支改善が見込まれます。
+    )}へ改善する想定です。12ヶ月目には月間売上増加が${finalMonthlyRevenueIncrease}、月間収支改善が${finalMonthlyProfit}、12ヶ月累計収支改善が${finalCumulativeProfit}と見込まれます。
 
-まずは宿泊時のLINE登録促進、館内POP設置、宿泊後の限定プラン配信から始めることで、段階的に外部予約依存を下げていくことができます。`,
+まずは宿泊時のスタッフ声かけ、館内POP・QRコード設置、登録特典の設計、季節プランや連泊プランの月次配信から始めることで、段階的に外部予約依存を下げていくことができます。`,
   };
 }
 
@@ -790,8 +828,8 @@ export default function EstimateSimulator() {
     [activeIndustry, inputs, scenario, result],
   );
   const sheetBlock = useMemo(
-    () => buildSheetBlock(projectionRows),
-    [projectionRows],
+    () => buildSheetBlock(projectionRows, activeIndustry, inputs, scenario),
+    [projectionRows, activeIndustry, inputs, scenario],
   );
   const currentProjection = useMemo(
     () => buildCurrentProjection(activeIndustry, inputs, result),
@@ -866,6 +904,7 @@ export default function EstimateSimulator() {
             directRatio: row.directRatio,
             unitPrice: row.unitPrice,
             cumulativeProfit: row.cumulativeProfit,
+            monthlyProfit: row.monthlyProfit,
             monthlyDifference: row.monthlyDifference,
           })),
         }),
@@ -1222,8 +1261,7 @@ export default function EstimateSimulator() {
               />
               <KpiShift
                 label="12ヶ月累計収支改善"
-                before="導入前 0円"
-                after={formatYen(oneYearProjection.cumulativeProfit)}
+                after={formatApproxManYen(oneYearProjection.cumulativeProfit)}
               />
             </div>
 
@@ -1433,15 +1471,19 @@ function KpiShift({
   after,
 }: {
   label: string;
-  before: string;
+  before?: string;
   after: string;
 }) {
   return (
     <article className="bg-white p-5">
       <p className="text-[11px] tracking-[0.16em] text-black/42">{label}</p>
       <div className="mt-4 flex items-center justify-between gap-3">
-        <span className="text-sm text-black/50">{before}</span>
-        <ArrowRight size={15} className="shrink-0 text-black/35" />
+        {before ? (
+          <>
+            <span className="text-sm text-black/50">{before}</span>
+            <ArrowRight size={15} className="shrink-0 text-black/35" />
+          </>
+        ) : null}
         <span className="text-lg font-medium text-[#5b21b6]">{after}</span>
       </div>
     </article>
