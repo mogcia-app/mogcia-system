@@ -15,6 +15,7 @@ export default function LpPage() {
       description="訴求を整理して行動につなげる LP をまとめたページです。キャンペーン、商品訴求、申込導線を意識した案件を並べています。"
       items={lpItems}
       category="LP"
+      heroImagePath="/lpmog.png"
     >
       <section className="grid gap-8 border-t border-black/8 pt-12 lg:grid-cols-[180px_1fr] lg:gap-12">
           <p className="text-sm tracking-[0.18em] text-black/35">

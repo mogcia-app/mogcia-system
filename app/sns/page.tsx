@@ -12,6 +12,7 @@ export default function SnsPage() {
       description="投稿一覧の統一感と単体クリエイティブの強さを両立させる SNS デザインをまとめています。保存や閲覧継続を意識した構成です。"
       items={snsItems}
       category="SNS"
+      heroImagePath="/snsmog.png"
     />
   );
 }

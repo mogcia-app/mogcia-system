@@ -16,9 +16,9 @@ export const metadata: Metadata = {
   title: "Portfolio Showcase",
   description: "HP・LP・SNS の制作実績を一覧と詳細で見せるポートフォリオサイト",
   icons: {
-    icon: "/ficon.png",
-    shortcut: "/ficon.png",
-    apple: "/ficon.png",
+    icon: "/m.png",
+    shortcut: "/m.png",
+    apple: "/m.png",
   },
 };
 

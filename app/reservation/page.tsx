@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 import SiteFooter from "@/components/site-footer";
@@ -39,6 +40,20 @@ export default function ReservationPage() {
       <SiteHeader active="予約サイト" />
 
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-14 px-6 py-10 sm:px-8 lg:px-10 lg:py-14">
+        <section className="overflow-hidden">
+          <div className="relative aspect-16/7 w-full bg-[#f8f8f8]">
+            <Image
+              src="/yoyakumog.png"
+              alt="予約サイトのメインビジュアル"
+              fill
+              priority
+              unoptimized
+              className="object-contain"
+              sizes="100vw"
+            />
+          </div>
+        </section>
+
         <section className="grid min-h-[48vh] gap-10 border-b border-black/8 pb-12 lg:grid-cols-[180px_1fr] lg:items-end lg:gap-12">
           <p className="text-sm tracking-[0.18em] text-black/35">
             RESERVATION SITE

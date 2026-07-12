@@ -36,13 +36,14 @@ export default function PortfolioListPage({
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-6 py-10 sm:px-8 lg:px-10 lg:py-14">
         {heroImagePath ? (
           <section className="overflow-hidden">
-            <div className="relative aspect-[16/7] w-full bg-[#f8f8f8]">
+            <div className="relative aspect-16/7 w-full bg-[#f8f8f8]">
               <Image
                 src={heroImagePath}
                 alt={`${title} hero`}
                 fill
+                priority
                 unoptimized
-                className="object-cover"
+                className="object-contain"
                 sizes="100vw"
               />
             </div>
