@@ -167,7 +167,6 @@ export default function SimulationHistoryList() {
       <div className="space-y-4">
         {sortedHistory.map((savedSimulation) => {
           const cumulativeProfit = getLastValueByLabels(savedSimulation, [
-            "累計収支改善",
             "累計収支",
           ]);
           const estimatedReservations = getLastValueByLabels(savedSimulation, [

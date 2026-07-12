@@ -83,10 +83,6 @@ function fallbackAnalyze(payload: AnalyzePayload): AiComment {
   const finalRepeatRatio = Math.round(lastProjection?.repeatRatio || repeatRatio);
   const finalDirectRatio = Math.round(lastProjection?.directRatio || directRatio);
   const finalMonthlyDifference = lastProjection?.monthlyDifference || payload.result.monthlyImpact;
-  const finalMonthlyProfit =
-    lastProjection?.monthlyProfit ?? finalMonthlyDifference - 30000;
-  const finalCumulativeProfit =
-    lastProjection?.cumulativeProfit ?? finalMonthlyDifference * 12 - 510000;
 
   return {
     improvements: [
@@ -115,17 +111,13 @@ function fallbackAnalyze(payload: AnalyzePayload): AiComment {
 
 12ヶ月後は、LINE友だち数が${finalLineFriends}人、リピーター率が${Math.round(
       repeatRatio,
-    )}%から${finalRepeatRatio}%、公式・自社予約率が${Math.round(
+    )}%から${finalRepeatRatio}%、公式HP予約率が${Math.round(
       directRatio,
     )}%から${finalDirectRatio}%へ改善する想定です。
 
 12ヶ月後には月間${formatApproxManYen(
       finalMonthlyDifference,
-    )}の売上増加、月間収支改善は${formatApproxManYen(
-      finalMonthlyProfit,
-    )}、12ヶ月累計で${formatApproxManYen(
-      finalCumulativeProfit,
-    )}の収支改善を見込んでいます。
+    )}の売上増加が見込まれます。
 
 まずは、スタッフの声かけ、館内POP内のQRコード設置、登録特典の用意から始め、季節プランや空室案内の配信でリピーター施策を強化していきましょう。`,
   };

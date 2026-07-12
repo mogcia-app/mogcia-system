@@ -1,4 +1,5 @@
 import { ArrowRight, Globe2, MessageCircle } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 
 import AuthGuard from "@/components/auth-guard";
@@ -25,16 +26,30 @@ const simulationItems = [
 export default function SimulationPage() {
   return (
     <main className="min-h-screen bg-white text-black">
-      <SiteHeader active="シュミレーション" />
+      <SiteHeader active="シミュレーション" />
 
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-6 py-8 sm:px-8 lg:px-10 lg:py-10">
+        <section className="overflow-hidden">
+          <div className="relative aspect-16/7 w-full bg-[#f8f8f8]">
+            <Image
+              src="/shumog.png"
+              alt="シミュレーションのメインビジュアル"
+              fill
+              priority
+              unoptimized
+              className="object-contain"
+              sizes="100vw"
+            />
+          </div>
+        </section>
+
         <section className="border-b border-black/8 pb-6">
           <div className="max-w-5xl">
             <p className="text-[11px] tracking-[0.18em] text-black/35">
               SIMULATION
             </p>
             <h1 className="mt-2 text-[1.5rem] leading-[1.25] font-light sm:text-[1.7rem] lg:text-[1.8rem]">
-              シュミレーション
+              シミュレーション
             </h1>
           </div>
         </section>

@@ -7,7 +7,7 @@ type SiteHeaderProps = {
     | "LP"
     | "SNS"
     | "予約サイト"
-    | "シュミレーション"
+    | "シミュレーション"
     | "その他"
     | "作品一覧";
 };
@@ -17,7 +17,7 @@ const navigationItems = [
   { label: "LP", href: "/lp" },
   { label: "SNS", href: "/sns" },
   { label: "予約サイト", href: "/reservation" },
-  { label: "シュミレーション", href: "/simulation" },
+  { label: "シミュレーション", href: "/simulation" },
   { label: "その他", href: "/others" },
   { label: "作品一覧", href: "/works" },
 ] as const;
@@ -33,7 +33,7 @@ export default function SiteHeader({ active }: SiteHeaderProps) {
             width={420}
             height={108}
             priority
-            className="h-12 w-auto sm:h-14"
+            className="h-14 w-auto sm:h-16"
           />
         </Link>
 

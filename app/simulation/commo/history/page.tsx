@@ -6,7 +6,7 @@ import SiteHeader from "@/components/site-header";
 export default function CommoSimulationHistoryPage() {
   return (
     <main className="min-h-screen bg-white text-black">
-      <SiteHeader active="シュミレーション" />
+      <SiteHeader active="シミュレーション" />
 
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-10 px-6 py-8 sm:px-8 lg:px-10 lg:py-10">
         <section className="border-b border-black/8 pb-6">
