@@ -23,10 +23,13 @@ export default function CommoCasesPage() {
               Anonymous Case Library
             </p>
             <h1 className="mt-6 max-w-3xl text-4xl font-medium tracking-[-0.03em] text-black sm:text-5xl lg:text-6xl">
-              匿名導入事例
+              匿名活用事例
             </h1>
             <p className="mt-6 max-w-2xl text-base leading-9 text-black/62 sm:text-lg">
-              業種や課題に近い導入事例を、商談中にすぐ探せるライブラリです。施設名や企業名は掲載せず、実際の導入内容をもとに匿名化・一般化しています。
+              業種や課題に近い活用事例を、商談中にすぐ探せるライブラリです。施設名や企業名は掲載せず、実際の相談内容・導入傾向・改善パターンをもとに、匿名化・一般化しています。
+            </p>
+            <p className="mt-4 max-w-2xl text-sm leading-7 text-black/52 sm:text-base">
+              商談相手の業種や課題に近い事例を選ぶと、提案に使える改善内容・導入後の変化・商談用トークを確認できます。
             </p>
             <div className="mt-8 flex flex-wrap gap-2">
               {["課題から探す", "業種から探す", "詳細をその場で確認"].map((item) => (
