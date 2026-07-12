@@ -1022,7 +1022,7 @@ function calculateSimulation(
   const priority = [
     { label: "LINE登録導線の強化", value: lineImpact },
     { label: "リピーター施策の強化", value: repeatImpact },
-    { label: "公式HP予約への転換によるOTA手数料削減", value: directImpact },
+    { label: "公式予約転換によるOTA手数料削減", value: directImpact },
     {
       label: "客単価アップ施策（連泊プラン・季節限定プランの活用）",
       value: unitPriceImpact,
@@ -1227,11 +1227,12 @@ function buildSheetBlock(
       accent: "purple",
       rows: [
         {
-          section: "売上",
-          label: "月間売上増加見込み",
+          section: "収益改善",
+          label: "月間収益改善見込み",
           values: withLineRevenue,
           emphasis: "positive",
-          detail: "その月単体で見込まれる売上増加額です。",
+          detail:
+            "その月単体で見込まれる収益改善額です。売上増加分と公式予約転換によるOTA手数料削減を合わせて試算しています。",
         },
         {
           section: "LINE友だち",
@@ -1284,11 +1285,12 @@ function buildSheetBlock(
         },
         {
           section: "OTA手数料削減",
-          label: "OTA手数料の削減見込み",
+          label: "公式予約転換によるOTA手数料削減",
           values: feeSavings,
           emphasis: "positive",
           format: "manYenDecimal",
-          detail: "OTA経由だった予約の一部が公式HP予約へ転換することで削減できる手数料を試算しています。売上本体の移行分は売上増加として計上していません。",
+          detail:
+            "OTA経由だった予約の一部が、公式HP予約へ転換した場合に削減できる手数料の試算です。LINE経由予約売上とは別で計算しています。",
         },
         {
           section: "計算内訳",
@@ -1306,7 +1308,7 @@ function buildSheetBlock(
         },
         {
           section: "計算内訳",
-          label: "月間売上改善率",
+          label: "月間収益改善率",
           values: growthRates,
           format: "percent",
         },
@@ -1333,7 +1335,7 @@ function buildSheetBlock(
           label: "月間収支",
           values: grossProfits,
           emphasis: "strong",
-          detail: "その月の月間売上増加見込みから月額運用費を差し引いた金額です。初月は初期設定費を含むため、一時的にマイナス表示になる場合があります。",
+          detail: "その月の月間収益改善見込みから月額運用費を差し引いた金額です。初月は初期設定費を含むため、一時的にマイナス表示になる場合があります。",
         },
         {
           section: "収支",
@@ -1391,7 +1393,7 @@ function makeFallbackComment(
       lastProjection?.repeatRatio || 0,
     )}、公式HP予約率が${currentDirectRatio}から${formatPercent(
       lastProjection?.directRatio || 0,
-    )}へ改善する想定です。12ヶ月後には月間${finalMonthlyRevenueIncrease}の売上増加が見込まれます。
+    )}へ改善する想定です。12ヶ月後には月間${finalMonthlyRevenueIncrease}の収益改善が見込まれます。
 
 まずは、スタッフの声かけ、館内POP内のQRコード設置、登録特典の用意から始め、季節プランや空室案内の配信でリピーター施策を強化していきましょう。`,
   };
@@ -1451,9 +1453,9 @@ export default function EstimateSimulator() {
     () =>
       sheetBlock.rows.filter((row) =>
         [
-          "月間売上増加見込み",
+          "月間収益改善見込み",
           "累計LINE友だち数",
-          "OTA手数料の削減見込み",
+          "公式予約転換によるOTA手数料削減",
           "月間収支",
           "累計収支",
         ].includes(row.label),
@@ -1471,9 +1473,9 @@ export default function EstimateSimulator() {
           "LINE経由の新規・再来訪予約売上",
           "再来訪による純増売上",
           "平均予約単価改善による売上増",
-          "OTA手数料の削減見込み",
+          "公式予約転換によるOTA手数料削減",
           "重複調整",
-          "月間売上改善率",
+          "月間収益改善率",
           "初期設定費",
           "月額運用費",
           "月間支出",
@@ -2616,10 +2618,13 @@ function CalculationBasisBox({
             )}%が予約につながる想定です。
           </p>
           <p>
-            月間売上増加見込みは、LINE経由予約売上、リピーター率改善による売上増、平均予約単価改善による売上増、OTA手数料削減見込みをもとに算出し、効果が重複しすぎないよう調整しています。
+            月間収益改善見込みは、LINE経由予約売上、リピーター率改善による売上増、平均予約単価改善による売上増、公式予約転換によるOTA手数料削減をもとに算出し、効果が重複しすぎないよう調整しています。
           </p>
           <p>
-            月間収支は、月間売上増加見込みから月額運用費{formatManYenLabel(
+            OTA手数料削減見込みは、LINE経由予約分だけではなく、OTA経由だった予約の一部が公式HP予約へ転換した場合に、本来発生していたOTA手数料が削減されるものとして試算しています。
+          </p>
+          <p>
+            月間収支は、月間収益改善見込みから月額運用費{formatManYenLabel(
               monthlyLineOperationCost,
             )}を差し引いた金額です。累計収支は、初期設定費{formatManYenLabel(
               initialLineSetupCost,
