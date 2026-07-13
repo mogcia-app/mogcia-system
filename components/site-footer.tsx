@@ -27,9 +27,6 @@ export default function SiteFooter() {
             <Link href="/reservation" className="transition hover:text-black">
               予約サイト
             </Link>
-            <Link href="/others" className="transition hover:text-black">
-              その他
-            </Link>
             <Link href="/works" className="transition hover:text-black">
               作品一覧
             </Link>

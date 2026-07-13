@@ -15,6 +15,7 @@ type PortfolioListPageProps = {
   category?: PortfolioCategory;
   filterLabel?: string;
   heroImagePath?: string;
+  showPortfolioGrid?: boolean;
   children?: ReactNode;
 };
 
@@ -27,6 +28,7 @@ export default function PortfolioListPage({
   category,
   filterLabel,
   heroImagePath,
+  showPortfolioGrid = true,
   children,
 }: PortfolioListPageProps) {
   return (
@@ -62,32 +64,34 @@ export default function PortfolioListPage({
           </div>
         </section>
 
-        {category ? (
-          <section className="space-y-5">
-            <div>
-              <p className="text-xs tracking-[0.18em] text-black/35">
-                CATEGORY
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold">{category}</h2>
-            </div>
-            <PortfolioCardGrid items={items} />
-          </section>
-        ) : (
-          <section className="space-y-5">
-            <div>
-              <p className="text-xs tracking-[0.18em] text-black/35">
-                ALL WORKS
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold">作品一覧</h2>
-              {filterLabel ? (
-                <p className="mt-2 text-sm leading-7 text-black/58">
-                  Filter: {filterLabel}
+        {showPortfolioGrid ? (
+          category ? (
+            <section className="space-y-5">
+              <div>
+                <p className="text-xs tracking-[0.18em] text-black/35">
+                  CATEGORY
                 </p>
-              ) : null}
-            </div>
-            <PortfolioCardGrid items={items} />
-          </section>
-        )}
+                <h2 className="mt-2 text-2xl font-semibold">{category}</h2>
+              </div>
+              <PortfolioCardGrid items={items} />
+            </section>
+          ) : (
+            <section className="space-y-5">
+              <div>
+                <p className="text-xs tracking-[0.18em] text-black/35">
+                  ALL WORKS
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold">作品一覧</h2>
+                {filterLabel ? (
+                  <p className="mt-2 text-sm leading-7 text-black/58">
+                    Filter: {filterLabel}
+                  </p>
+                ) : null}
+              </div>
+              <PortfolioCardGrid items={items} />
+            </section>
+          )
+        ) : null}
 
         {children}
       </section>

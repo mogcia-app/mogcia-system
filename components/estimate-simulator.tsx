@@ -350,6 +350,57 @@ const lineAccountOptions = [
   { value: "none", label: "まだ開設していない" },
 ] as const;
 
+const facilityPlaceholders: Record<Industry, string> = {
+  hotel: "例：〇〇ホテル",
+  golf: "例：〇〇ゴルフクラブ",
+  restaurant: "例：〇〇ダイニング",
+};
+
+const industryMessageLabels: Record<
+  Industry,
+  {
+    infoDelivery: string;
+    registrationTouchpoints: string;
+    seasonalDelivery: string;
+    visitAfter: string;
+    externalSiteLabel: string;
+    directRateLabel: string;
+    directDestination: string;
+    lineRegistrationTouchpoints: string;
+  }
+> = {
+  hotel: {
+    infoDelivery: "季節プランや空室情報を直接届けられる",
+    registrationTouchpoints: "館内POP・客室内案内・フロント周辺にQRコードを設置",
+    seasonalDelivery: "季節プラン・直前空室・連泊プラン",
+    visitAfter: "宿泊後",
+    externalSiteLabel: "OTA",
+    directRateLabel: "公式HP予約率",
+    directDestination: "公式サイト",
+    lineRegistrationTouchpoints: "宿泊時・チェックアウト時・館内POP",
+  },
+  golf: {
+    infoDelivery: "季節プランや予約枠情報を直接届けられる",
+    registrationTouchpoints: "クラブハウス内POP・受付周辺・カート周辺にQRコードを設置",
+    seasonalDelivery: "季節プラン・空き予約枠・コンペ案内",
+    visitAfter: "来場後",
+    externalSiteLabel: "外部予約サイト",
+    directRateLabel: "自社予約率",
+    directDestination: "自社予約",
+    lineRegistrationTouchpoints: "受付時・精算時・クラブハウス内POP",
+  },
+  restaurant: {
+    infoDelivery: "限定メニューや空席・予約枠情報を直接届けられる",
+    registrationTouchpoints: "店内POP・レジ周辺・テーブル上にQRコードを設置",
+    seasonalDelivery: "限定メニュー・空席案内・予約枠案内",
+    visitAfter: "来店後",
+    externalSiteLabel: "グルメサイト",
+    directRateLabel: "公式予約率",
+    directDestination: "公式予約",
+    lineRegistrationTouchpoints: "来店時・会計時・店内POP",
+  },
+};
+
 const inputUsageGuidesByIndustry: Record<Industry, InputUsageGuide[]> = {
   hotel: [
     {
@@ -787,12 +838,16 @@ function getReverseThresholdScore(value: number, thresholds: number[]) {
   return 1;
 }
 
-function getOpportunityRatings(inputs: SimulationInputs): OpportunityRating[] {
+function getOpportunityRatings(
+  industry: Industry,
+  inputs: SimulationInputs,
+): OpportunityRating[] {
   const thirdPartyRatio = toNumber(inputs.thirdPartyRatio);
   const repeatRatio = toNumber(inputs.repeatRatio);
   const directRatio = toNumber(inputs.directRatio);
   const issueText = getIssueSummary(inputs);
-  const annualOtaCommission = getAnnualOtaCommissionEstimate("hotel", inputs);
+  const annualOtaCommission = getAnnualOtaCommissionEstimate(industry, inputs);
+  const labels = industryMessageLabels[industry];
   const otaScore = getThresholdScore(thirdPartyRatio, [50, 35, 20, 10]);
   const repeatScore = getReverseThresholdScore(repeatRatio, [20, 30, 40, 50]);
   const lineAccountStatus = getLineAccountStatus(inputs);
@@ -809,10 +864,10 @@ function getOpportunityRatings(inputs: SimulationInputs): OpportunityRating[] {
 
   return [
     {
-      label: "OTA依存",
+      label: `${labels.externalSiteLabel}依存`,
       score: otaScore,
       description: getRatingLabel(otaScore),
-      detail: `OTA予約比率が${formatPercent(
+      detail: `${labels.externalSiteLabel}予約比率が${formatPercent(
         thirdPartyRatio,
       )}あり、年間${formatApproxManYen(
         annualOtaCommission,
@@ -824,7 +879,7 @@ function getOpportunityRatings(inputs: SimulationInputs): OpportunityRating[] {
       description: getRatingLabel(repeatScore),
       detail: `現在のリピーター率は${formatPercent(
         repeatRatio,
-      )}で、宿泊後の再来訪を促す施策に改善余地があります。`,
+      )}で、${labels.visitAfter}の再来訪を促す施策に改善余地があります。`,
     },
     {
       label: "LINE活用",
@@ -832,26 +887,30 @@ function getOpportunityRatings(inputs: SimulationInputs): OpportunityRating[] {
       description: lineScore >= 5 ? "未整備" : getRatingLabel(lineScore),
       detail:
         lineAccountStatus === "none"
-          ? "宿泊後のお客様と継続的につながるLINE導線がまだ整備されていません。"
+          ? `${labels.visitAfter}のお客様と継続的につながるLINE導線がまだ整備されていません。`
           : "既存のLINE友だちへ継続的に案内を届ける運用に改善余地があります。",
     },
     {
       label: "公式予約導線",
       score: directScore,
       description: getRatingLabel(directScore),
-      detail: `公式HP予約比率は${formatPercent(
+      detail: `${labels.directRateLabel}は${formatPercent(
         directRatio,
-      )}で、次回予約を公式サイトへ誘導する余地があります。`,
+      )}で、次回予約を${labels.directDestination}へ誘導する余地があります。`,
     },
   ];
 }
 
-function getRecommendation(inputs: SimulationInputs): Recommendation {
+function getRecommendation(
+  industry: Industry,
+  inputs: SimulationInputs,
+): Recommendation {
   const thirdPartyRatio = toNumber(inputs.thirdPartyRatio);
   const directRatio = toNumber(inputs.directRatio);
   const repeatRatio = toNumber(inputs.repeatRatio);
   const lineAccountStatus = getLineAccountStatus(inputs);
   const currentLineFriends = getCurrentLineFriends(inputs);
+  const labels = industryMessageLabels[industry];
   const issueCount = Array.isArray(inputs.currentIssue)
     ? (inputs.currentIssue as string[]).length
     : 0;
@@ -898,8 +957,7 @@ function getRecommendation(inputs: SimulationInputs): Recommendation {
       score >= 5
         ? "公式LINE導入との相性が高い施設です"
         : "公式LINE活用による改善余地があります",
-    detail:
-      "OTA予約比率が高く、宿泊後のお客様との接点が不足しています。公式LINEを活用することで、OTAで獲得したお客様を次回の公式予約や再来訪へつなげる余地があります。",
+    detail: `${labels.externalSiteLabel}予約比率が高く、${labels.visitAfter}のお客様との接点が不足しています。公式LINEを活用することで、${labels.externalSiteLabel}で獲得したお客様を次回の${labels.directDestination}や再来訪へつなげる余地があります。`,
   };
 }
 
@@ -934,19 +992,25 @@ function getIntroductionReasons(industry: Industry, inputs: SimulationInputs) {
   }
 
   if (issueText.includes("公式") || issueText.includes("自社") || toNumber(inputs.directRatio) < 20) {
-    addReason("公式HP予約比率をさらに高められる可能性がある");
+    addReason(`${industryMessageLabels[industry].directRateLabel}をさらに高められる可能性がある`);
   }
 
   if (issueText.includes("接点") || issueText.includes("宿泊後") || issueText.includes("来店後")) {
     addReason(`${afterVisitLabel}のお客様との接点を継続できる`);
   }
 
-  if (issueText.includes("季節") || issueText.includes("空室") || issueText.includes("案内")) {
-    addReason("季節プランや空室情報を直接届けられる");
+  if (
+    issueText.includes("季節") ||
+    issueText.includes("空室") ||
+    issueText.includes("予約枠") ||
+    issueText.includes("空席") ||
+    issueText.includes("案内")
+  ) {
+    addReason(industryMessageLabels[industry].infoDelivery);
   }
 
   addReason("リピーター施策を始められる");
-  addReason("OTAで獲得したお客様を自社の顧客接点として育てられる");
+  addReason(`${externalSiteLabel}で獲得したお客様を自社の顧客接点として育てられる`);
 
   return reasons.slice(0, 5);
 }
@@ -966,11 +1030,11 @@ function getSalesSummary(
         : "グルメサイト";
   const stayLabel =
     industry === "hotel" ? "宿泊後" : industry === "golf" ? "来場後" : "来店後";
-  const directLabel = industry === "hotel" ? "公式サイト" : "自社予約";
-  const diagnosis = `${externalSiteLabel}予約比率が${thirdPartyRatio}と高く、${stayLabel}のお客様との接点づくりに改善余地があります。公式LINEを活用することで、${externalSiteLabel}で獲得したお客様と${stayLabel}もつながり、次回予約を${directLabel}へ誘導する仕組みをつくれます。`;
-  const salesTalk = `${facilityName}は${externalSiteLabel}予約比率が${thirdPartyRatio}で、${stayLabel}のお客様を次回の公式予約へつなげる仕組みに改善余地があります。現在の入力内容では、年間のOTA手数料は${formatApproxManYen(
+  const { infoDelivery, directDestination } = industryMessageLabels[industry];
+  const diagnosis = `${externalSiteLabel}予約比率が${thirdPartyRatio}と高く、${stayLabel}のお客様との接点づくりに改善余地があります。公式LINEを活用することで、${externalSiteLabel}で獲得したお客様と${stayLabel}もつながり、次回予約を${directDestination}へ誘導する仕組みをつくれます。`;
+  const salesTalk = `${facilityName}は${externalSiteLabel}予約比率が${thirdPartyRatio}で、${stayLabel}のお客様を次回の${directDestination}へつなげる仕組みに改善余地があります。現在の入力内容では、年間の${externalSiteLabel}手数料は${formatApproxManYen(
     annualOtaCommission,
-  )}と試算されます。公式LINEを導入することで、${externalSiteLabel}で獲得したお客様と${stayLabel}もつながり、季節プランや空室情報を直接届けられます。まずは館内POPやQRカードを設置し、スタッフのお声がけと登録特典を組み合わせながら、公式予約へ誘導する仕組みを整えることをおすすめします。`;
+  )}と試算されます。公式LINEを導入することで、${externalSiteLabel}で獲得したお客様と${stayLabel}もつながり、${infoDelivery}ようになります。まずはQRコード付き案内物を設置し、スタッフのお声がけと登録特典を組み合わせながら、${directDestination}へ誘導する仕組みを整えることをおすすめします。`;
 
   return {
     diagnosis,
@@ -980,7 +1044,7 @@ function getSalesSummary(
       "月2〜4回の配信を始める",
     ],
     supportItems: [
-      "館内POP・QRカードの作成",
+      "QRコード付き案内物の作成",
       "スタッフ向け案内トークの作成",
       "配信内容と運用改善の支援",
     ],
@@ -1018,13 +1082,17 @@ function calculateSimulation(
     rawMonthlyImpact * conservativeImpactFactor,
     currentRevenue > 0 ? currentRevenue * 0.12 : rawMonthlyImpact * conservativeImpactFactor,
   );
+  const labels = industryMessageLabels[industry];
 
   const priority = [
     { label: "LINE登録導線の強化", value: lineImpact },
     { label: "リピーター施策の強化", value: repeatImpact },
-    { label: "公式予約転換によるOTA手数料削減", value: directImpact },
     {
-      label: "客単価アップ施策（連泊プラン・季節限定プランの活用）",
+      label: `公式予約転換による${labels.externalSiteLabel}手数料削減`,
+      value: directImpact,
+    },
+    {
+      label: `客単価アップ施策（${labels.seasonalDelivery}の活用）`,
       value: unitPriceImpact,
     },
   ]
@@ -1191,6 +1259,7 @@ function buildSheetBlock(
   inputs: SimulationInputs,
   scenario: Record<ScenarioKey, number>,
 ): SheetBlock {
+  const labels = industryMessageLabels[industry];
   const lineReservationRate = deliveryReservationRateByIndustry[industry] * 100;
   const withLineRevenue = rows.map((row) => row.monthlyDifference);
   const monthlyNewLineFriends = rows.map((row) => row.monthlyNewLineFriends);
@@ -1231,8 +1300,7 @@ function buildSheetBlock(
           label: "月間収益改善見込み",
           values: withLineRevenue,
           emphasis: "positive",
-          detail:
-            "その月単体で見込まれる収益改善額です。売上増加分と公式予約転換によるOTA手数料削減を合わせて試算しています。",
+          detail: `その月単体で見込まれる収益改善額です。売上増加分と公式予約転換による${labels.externalSiteLabel}手数料削減を合わせて試算しています。`,
         },
         {
           section: "LINE友だち",
@@ -1281,23 +1349,22 @@ function buildSheetBlock(
           label: "再来訪による純増売上",
           values: repeatRevenue,
           emphasis: "positive",
-          detail: "宿泊後の接点づくりや限定案内により、再来訪につながる割合が段階的に改善すると仮定しています。",
+          detail: `${labels.visitAfter}の接点づくりや限定案内により、再来訪につながる割合が段階的に改善すると仮定しています。`,
         },
         {
-          section: "OTA手数料削減",
-          label: "公式予約転換によるOTA手数料削減",
+          section: `${labels.externalSiteLabel}手数料削減`,
+          label: `公式予約転換による${labels.externalSiteLabel}手数料削減`,
           values: feeSavings,
           emphasis: "positive",
           format: "manYenDecimal",
-          detail:
-            "OTA経由だった予約の一部が、公式HP予約へ転換した場合に削減できる手数料の試算です。LINE経由予約売上とは別で計算しています。",
+          detail: `${labels.externalSiteLabel}経由だった予約の一部が、${labels.directDestination}へ転換した場合に削減できる手数料の試算です。LINE経由予約売上とは別で計算しています。`,
         },
         {
           section: "計算内訳",
           label: "平均予約単価改善による売上増",
           values: unitPriceIncreaseRevenue,
           emphasis: "positive",
-          detail: "季節限定プラン、連泊プラン、アップセル提案などにより、平均予約単価の改善を見込んでいます。",
+          detail: `${labels.seasonalDelivery}、アップセル提案などにより、平均予約単価の改善を見込んでいます。`,
         },
         {
           section: "計算内訳",
@@ -1363,13 +1430,14 @@ function makeFallbackComment(
   );
   const industryLabel =
     industry === "hotel" ? "OTA" : industry === "golf" ? "外部予約サイト" : "グルメサイト";
+  const messageLabels = industryMessageLabels[industry];
 
   return {
     improvements: [
-      "宿泊時・チェックアウト時のスタッフ声かけを強化",
-      "登録特典として宿泊割引・館内利用特典・ポイント付与を用意",
-      "館内POP・客室内案内・フロント周辺にQRコードを設置",
-      "月2〜4回、季節プラン・直前空室・連泊プランを配信",
+      `${messageLabels.visitAfter}のスタッフ声かけを強化`,
+      "登録特典として限定特典・施設内利用特典・ポイント付与を用意",
+      messageLabels.registrationTouchpoints,
+      `月2〜4回、${messageLabels.seasonalDelivery}を配信`,
       "LINE経由予約数・登録数・配信反応を毎月確認し改善",
     ],
     priorityMeasures: [
@@ -1380,22 +1448,22 @@ function makeFallbackComment(
     ],
     commoActions: [
       "スタッフ向けのLINE登録案内トークを作成",
-      "館内POP・QRコード付き案内物を作成",
+      "QRコード付き案内物を作成",
       "初回登録特典を設計",
       "月次配信カレンダーを作成",
       "配信結果をもとに改善提案を実施",
     ],
-    salesTalk: `${facilityName}は、${industryLabel}予約比率が${thirdPartyRatio}で、外部予約経由の集客に依存している状態です。公式LINE導入により、宿泊後のお客様と継続的につながり、次回予約や公式予約への誘導を強化できます。本試算では、LINE経由の直接予約だけでなく、宿泊後の再来訪促進や平均予約単価の改善も含めて効果を見ています。
+    salesTalk: `${facilityName}は、${industryLabel}予約比率が${thirdPartyRatio}で、外部予約経由の集客に依存している状態です。公式LINE導入により、${messageLabels.visitAfter}のお客様と継続的につながり、次回予約や公式予約への誘導を強化できます。本試算では、LINE経由の直接予約だけでなく、${messageLabels.visitAfter}の再来訪促進や平均予約単価の改善も含めて効果を見ています。
 
 12ヶ月後は、LINE友だち数が${formatNumber(
       lastProjection?.lineFriends || 0,
     )}人、リピーター率が${currentRepeatRatio}から${formatPercent(
       lastProjection?.repeatRatio || 0,
-    )}、公式HP予約率が${currentDirectRatio}から${formatPercent(
+    )}、${messageLabels.directRateLabel}が${currentDirectRatio}から${formatPercent(
       lastProjection?.directRatio || 0,
     )}へ改善する想定です。12ヶ月後には月間${finalMonthlyRevenueIncrease}の収益改善が見込まれます。
 
-まずは、スタッフの声かけ、館内POP内のQRコード設置、登録特典の用意から始め、季節プランや空室案内の配信でリピーター施策を強化していきましょう。`,
+まずは、スタッフの声かけ、QRコード付き案内物の設置、登録特典の用意から始め、${messageLabels.seasonalDelivery}の配信でリピーター施策を強化していきましょう。`,
   };
 }
 
@@ -1411,8 +1479,12 @@ export default function EstimateSimulator() {
   const [isProposalCopied, setIsProposalCopied] = useState(false);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
+  const [isDetailSimulationOpen, setIsDetailSimulationOpen] = useState(false);
+  const [isCalculationBreakdownOpen, setIsCalculationBreakdownOpen] =
+    useState(false);
 
   const activeIndustry = industry ?? "hotel";
+  const activeLabels = industryMessageLabels[activeIndustry];
   const inputs = inputsByIndustry[activeIndustry];
   const result = useMemo(
     () => calculateSimulation(activeIndustry, inputs, scenario),
@@ -1439,10 +1511,13 @@ export default function EstimateSimulator() {
     [activeIndustry, inputs],
   );
   const opportunityRatings = useMemo(
-    () => getOpportunityRatings(inputs),
-    [inputs],
+    () => getOpportunityRatings(activeIndustry, inputs),
+    [activeIndustry, inputs],
   );
-  const recommendation = useMemo(() => getRecommendation(inputs), [inputs]);
+  const recommendation = useMemo(
+    () => getRecommendation(activeIndustry, inputs),
+    [activeIndustry, inputs],
+  );
   const salesSummary = useMemo(
     () => getSalesSummary(activeIndustry, inputs, annualOtaCommission),
     [activeIndustry, inputs, annualOtaCommission],
@@ -1816,14 +1891,14 @@ export default function EstimateSimulator() {
               </p>
               <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-4">
                 <CurrentMetricCard
-                  label="OTA予約比率"
+                  label={`${activeLabels.externalSiteLabel}予約比率`}
                   value={formatPercent(toNumber(inputs.thirdPartyRatio))}
                 />
                 <CurrentMetricCard
-                  label="年間OTA手数料"
+                  label={`年間${activeLabels.externalSiteLabel}手数料`}
                   value={formatApproxManYen(annualOtaCommission)}
                   status="改善余地あり"
-                  description="公式LINEを通じて次回予約を公式サイトへ誘導することで、この手数料負担の一部を施設側に残せる可能性があります。"
+                  description={`公式LINEを通じて次回予約を${activeLabels.directDestination}へ誘導することで、この手数料負担の一部を施設側に残せる可能性があります。`}
                   featured
                 />
                 <CurrentMetricCard
@@ -1831,7 +1906,7 @@ export default function EstimateSimulator() {
                   value={formatPercent(currentProjection.repeatRatio)}
                 />
                 <CurrentMetricCard
-                  label="公式HP予約率"
+                  label={activeLabels.directRateLabel}
                   value={formatPercent(currentProjection.directRatio)}
                 />
               </div>
@@ -1839,9 +1914,9 @@ export default function EstimateSimulator() {
                 ※入力内容をもとにした概算です。
               </p>
               <div className="mt-4 border-l-2 border-[#7c3aed] pl-4 text-sm leading-8 text-black/66">
-                <p>公式LINEを導入する目的は、OTAをやめることではありません。</p>
+                <p>公式LINEを導入する目的は、{activeLabels.externalSiteLabel}をやめることではありません。</p>
                 <p className="mt-2">
-                  OTAで獲得したお客様と宿泊後もつながり、次回の予約を公式予約へ少しずつ切り替えていくことを目的としています。
+                  {activeLabels.externalSiteLabel}で獲得したお客様と{activeLabels.visitAfter}もつながり、次回の予約を{activeLabels.directDestination}へ少しずつ切り替えていくことを目的としています。
                 </p>
               </div>
 
@@ -1878,7 +1953,7 @@ export default function EstimateSimulator() {
                   delta={`+${formatNumber(oneYearProjection.repeatRatio - currentProjection.repeatRatio)}ポイント`}
                 />
                 <KpiShift
-                  label="公式HP予約率"
+                  label={activeLabels.directRateLabel}
                   before={formatPercent(currentProjection.directRatio)}
                   after={formatPercent(oneYearProjection.directRatio)}
                   delta={`+${formatNumber(oneYearProjection.directRatio - currentProjection.directRatio)}ポイント`}
@@ -1888,14 +1963,14 @@ export default function EstimateSimulator() {
                   before={formatPlainYen(currentProjection.unitPrice)}
                   after={formatPlainYen(oneYearProjection.unitPrice)}
                   delta={formatSignedYen(oneYearProjection.unitPrice - currentProjection.unitPrice)}
-                  note="季節プラン、連泊プラン、アップセル、限定特典などを公式LINEで案内した場合の参考値です。"
+                  note={`${activeLabels.seasonalDelivery}、アップセル、限定特典などを公式LINEで案内した場合の参考値です。`}
                 />
               </div>
               <div className="mt-4 bg-[#f7f3ff] px-4 py-4 text-xs leading-7 text-[#4c1d95]">
                 <p className="font-medium">この試算は保守的な条件です</p>
-                <p className="mt-1">館内POP・QRカードの設置を中心に計算しています。</p>
+                <p className="mt-1">QRコード付き案内物の設置を中心に計算しています。</p>
                 <p className="mt-1">
-                  スタッフのお声がけ、登録特典、チェックアウト時の案内を行うことで、LINE友だち数はさらに増加する可能性があります。
+                  スタッフのお声がけ、登録特典、{activeLabels.visitAfter}の案内を行うことで、LINE友だち数はさらに増加する可能性があります。
                 </p>
               </div>
             </section>
@@ -1977,7 +2052,7 @@ export default function EstimateSimulator() {
                 <div className="mt-5 text-sm leading-8 text-black/66">
                   <p>公式LINEは、予約を増やすためだけのツールではありません。</p>
                   <p className="mt-2">
-                    OTAで獲得したお客様との関係を、宿泊後も自社で育て、次回の公式予約へつなげていくための仕組みです。
+                    {activeLabels.externalSiteLabel}で獲得したお客様との関係を、{activeLabels.visitAfter}も自社で育て、次回の{activeLabels.directDestination}へつなげていくための仕組みです。
                   </p>
                 </div>
                 <div className="mt-5 flex flex-col gap-2 sm:flex-row">
@@ -2008,35 +2083,67 @@ export default function EstimateSimulator() {
               </div>
             </section>
 
-            <details className="bg-[#f7f8fa]">
-              <summary className="cursor-pointer px-5 py-4 text-sm font-medium text-black/72 transition hover:text-[#5b21b6]">
+            <section className="bg-[#f7f8fa]">
+              <button
+                type="button"
+                onClick={() => setIsDetailSimulationOpen((open) => !open)}
+                className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-black/72 transition hover:text-[#5b21b6]"
+                aria-expanded={isDetailSimulationOpen}
+              >
                 4. 詳細シミュレーションを見る
-              </summary>
-              <div className="border-t border-black/8 px-4 py-4">
-                <div className="overflow-x-auto">
-                  <SpreadsheetBlock block={sheetBlock} rows={mainSheetRows} />
-                </div>
-              </div>
-              <details className="border-t border-black/8 bg-white">
-                <summary className="cursor-pointer px-5 py-4 text-sm font-medium text-black/62 transition hover:text-[#5b21b6]">
-                  計算内訳を見る
-                </summary>
-                <div className="border-t border-black/8 overflow-x-auto p-4">
-                  <SpreadsheetBlock block={sheetBlock} rows={detailSheetRows} />
-                </div>
-              </details>
-              <div className="border-t border-black/8 bg-white px-5 py-3">
-                <p className="text-xs leading-6 text-black/45">
-                  {getLineRegistrationBasis(activeIndustry, inputs, scenario)}
-                  LINE登録者のうち、月間で一定割合が配信やリッチメニュー経由で予約につながる想定です。
-                </p>
-              </div>
-              <CalculationBasisBox
-                industry={activeIndustry}
-                inputs={inputs}
-                scenario={scenario}
-              />
-            </details>
+                <ChevronDown
+                  size={16}
+                  className={[
+                    "transition",
+                    isDetailSimulationOpen ? "rotate-180" : "",
+                  ].join(" ")}
+                />
+              </button>
+              {isDetailSimulationOpen ? (
+                <>
+                  <div className="border-t border-black/8 px-4 py-4">
+                    <div className="overflow-x-auto">
+                      <SpreadsheetBlock block={sheetBlock} rows={mainSheetRows} />
+                    </div>
+                  </div>
+                  <section className="border-t border-black/8 bg-white">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setIsCalculationBreakdownOpen((open) => !open)
+                      }
+                      className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-black/62 transition hover:text-[#5b21b6]"
+                      aria-expanded={isCalculationBreakdownOpen}
+                    >
+                      計算内訳を見る
+                      <ChevronDown
+                        size={16}
+                        className={[
+                          "transition",
+                          isCalculationBreakdownOpen ? "rotate-180" : "",
+                        ].join(" ")}
+                      />
+                    </button>
+                    {isCalculationBreakdownOpen ? (
+                      <div className="border-t border-black/8 overflow-x-auto p-4">
+                        <SpreadsheetBlock block={sheetBlock} rows={detailSheetRows} />
+                      </div>
+                    ) : null}
+                  </section>
+                  <div className="border-t border-black/8 bg-white px-5 py-3">
+                    <p className="text-xs leading-6 text-black/45">
+                      {getLineRegistrationBasis(activeIndustry, inputs, scenario)}
+                      LINE登録者のうち、月間で一定割合が配信やリッチメニュー経由で予約につながる想定です。
+                    </p>
+                  </div>
+                  <CalculationBasisBox
+                    industry={activeIndustry}
+                    inputs={inputs}
+                    scenario={scenario}
+                  />
+                </>
+              ) : null}
+            </section>
           </section>
 
             </>
@@ -2057,20 +2164,33 @@ export default function EstimateSimulator() {
 }
 
 function UsageGuideDetails({ industry }: { industry: Industry }) {
+  const [isOpen, setIsOpen] = useState(false);
+
   return (
-    <details className="bg-white p-5 lg:col-span-3">
-      <summary className="cursor-pointer text-sm font-medium text-black/72 transition hover:text-[#5b21b6]">
+    <section className="bg-white p-5 lg:col-span-3">
+      <button
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+        className="flex w-full items-center justify-between text-left text-sm font-medium text-black/72 transition hover:text-[#5b21b6]"
+        aria-expanded={isOpen}
+      >
         入力した数字は何に使われますか？
-      </summary>
-      <div className="mt-4 grid gap-px bg-black/8 sm:grid-cols-2 lg:grid-cols-3">
-        {inputUsageGuidesByIndustry[industry].map((guide) => (
-          <div key={guide.title} className="bg-[#fbfbfc] p-4">
-            <p className="text-sm font-medium text-black/80">{guide.title}</p>
-            <p className="mt-2 text-xs leading-6 text-black/55">{guide.body}</p>
-          </div>
-        ))}
-      </div>
-    </details>
+        <ChevronDown
+          size={16}
+          className={["transition", isOpen ? "rotate-180" : ""].join(" ")}
+        />
+      </button>
+      {isOpen ? (
+        <div className="mt-4 grid gap-px bg-black/8 sm:grid-cols-2 lg:grid-cols-3">
+          {inputUsageGuidesByIndustry[industry].map((guide) => (
+            <div key={guide.title} className="bg-[#fbfbfc] p-4">
+              <p className="text-sm font-medium text-black/80">{guide.title}</p>
+              <p className="mt-2 text-xs leading-6 text-black/55">{guide.body}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -2244,7 +2364,7 @@ function GenericHearingForm({
           onChange={(event) =>
             onInputChange("facilityName", event.target.value, true)
           }
-          placeholder="例：commo.ホテル銀座"
+          placeholder={facilityPlaceholders[industry]}
           className="mt-3 h-11 w-full border border-black/10 px-3 text-base outline-none transition focus:border-[#7c3aed]"
         />
       </label>
@@ -2406,6 +2526,10 @@ function HotelHearingForm({
 }
 
 function RouteRatioStatus({ routeRatioTotal }: { routeRatioTotal: number }) {
+  if (routeRatioTotal === 0) {
+    return null;
+  }
+
   const isComplete = routeRatioTotal === 100;
 
   return (
@@ -2597,6 +2721,7 @@ function CalculationBasisBox({
       : industry === "golf"
         ? "平均プレー料金"
         : "平均客単価";
+  const labels = industryMessageLabels[industry];
 
   return (
     <section className="border-t border-black/8 bg-[#f7f8fa] px-5 py-5">
@@ -2606,22 +2731,22 @@ function CalculationBasisBox({
         </h3>
         <div className="mt-3 space-y-3 text-xs leading-7 text-black/58">
           <p>
-            本シミュレーションは、{customerLabel}・{unitPriceLabel}・OTA予約比率・リピーター率などの入力値をもとに、公式LINE導入後の改善可能性を試算したものです。
+            本シミュレーションは、{customerLabel}・{unitPriceLabel}・{labels.externalSiteLabel}予約比率・リピーター率などの入力値をもとに、公式LINE導入後の改善可能性を試算したものです。
           </p>
           <p>
             月間LINE友だち追加数は、{customerLabel}{formatNumber(
               monthlyCustomers,
             )}人の約{lineRegistrationRate.toFixed(
               1,
-            )}%が宿泊時・チェックアウト時・館内POPなどを通じてLINE登録すると仮定しています。LINE経由予約は、累計LINE友だち数のうち月間{lineReservationRate.toFixed(
+            )}%が{labels.lineRegistrationTouchpoints}などを通じてLINE登録すると仮定しています。LINE経由予約は、累計LINE友だち数のうち月間{lineReservationRate.toFixed(
               1,
             )}%が予約につながる想定です。
           </p>
           <p>
-            月間収益改善見込みは、LINE経由予約売上、リピーター率改善による売上増、平均予約単価改善による売上増、公式予約転換によるOTA手数料削減をもとに算出し、効果が重複しすぎないよう調整しています。
+            月間収益改善見込みは、LINE経由予約売上、リピーター率改善による売上増、平均予約単価改善による売上増、公式予約転換による{labels.externalSiteLabel}手数料削減をもとに算出し、効果が重複しすぎないよう調整しています。
           </p>
           <p>
-            OTA手数料削減見込みは、LINE経由予約分だけではなく、OTA経由だった予約の一部が公式HP予約へ転換した場合に、本来発生していたOTA手数料が削減されるものとして試算しています。
+            {labels.externalSiteLabel}手数料削減見込みは、LINE経由予約分だけではなく、{labels.externalSiteLabel}経由だった予約の一部が{labels.directDestination}へ転換した場合に、本来発生していた{labels.externalSiteLabel}手数料が削減されるものとして試算しています。
           </p>
           <p>
             月間収支は、月間収益改善見込みから月額運用費{formatManYenLabel(

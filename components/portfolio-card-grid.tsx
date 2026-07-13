@@ -11,7 +11,7 @@ export default function PortfolioCardGrid({
   items,
 }: PortfolioCardGridProps) {
   return (
-    <div className="grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,320px),1fr))] gap-px bg-black/8">
       {items.map((item) => (
         <Link
           key={item.slug}

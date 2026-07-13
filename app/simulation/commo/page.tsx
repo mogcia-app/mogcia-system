@@ -25,7 +25,7 @@ export default function CommoSimulationPage() {
 
             <Link
               href="/simulation/commo/cases"
-              className="group inline-flex w-fit items-center gap-2 rounded-full border border-[#22C55E]/25 bg-[#22C55E]/10 px-5 py-3 text-sm font-medium text-[#15803D] shadow-[0_14px_38px_rgba(34,197,94,0.12)] transition hover:-translate-y-0.5 hover:bg-[#22C55E] hover:text-white"
+              className="group inline-flex w-fit items-center gap-2 rounded-full border border-[#22C55E]/25 bg-[#22C55E]/10 px-5 py-3 text-sm font-medium !text-[#064E3B] shadow-none transition hover:-translate-y-0.5 hover:bg-[#22C55E] hover:!text-white"
             >
               <ShieldCheck size={17} />
               成功事例を見る

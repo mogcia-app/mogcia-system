@@ -8,7 +8,6 @@ type SiteHeaderProps = {
     | "SNS"
     | "予約サイト"
     | "シミュレーション"
-    | "その他"
     | "作品一覧";
 };
 
@@ -18,7 +17,6 @@ const navigationItems = [
   { label: "SNS", href: "/sns" },
   { label: "予約サイト", href: "/reservation" },
   { label: "シミュレーション", href: "/simulation" },
-  { label: "その他", href: "/others" },
   { label: "作品一覧", href: "/works" },
 ] as const;
 

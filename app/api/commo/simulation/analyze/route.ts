@@ -66,6 +66,34 @@ function getFacilityDisplayName(inputs: AnalyzePayload["inputs"]) {
   return facilityName ? `${facilityName}様` : "貴施設";
 }
 
+function getIndustryMessageLabels(industry: AnalyzePayload["industry"]) {
+  if (industry === "golf") {
+    return {
+      visitAfter: "来場後",
+      registrationTouchpoints:
+        "クラブハウス内POP・受付周辺・カート周辺にQRコードを設置",
+      seasonalDelivery: "季節プラン・空き予約枠・コンペ案内",
+      directRateLabel: "自社予約率",
+    };
+  }
+
+  if (industry === "restaurant") {
+    return {
+      visitAfter: "来店後",
+      registrationTouchpoints: "店内POP・レジ周辺・テーブル上にQRコードを設置",
+      seasonalDelivery: "限定メニュー・空席案内・予約枠案内",
+      directRateLabel: "公式予約率",
+    };
+  }
+
+  return {
+    visitAfter: "宿泊後",
+    registrationTouchpoints: "館内POP・客室内案内・フロント周辺にQRコードを設置",
+    seasonalDelivery: "季節プラン・直前空室・連泊プラン",
+    directRateLabel: "公式HP予約率",
+  };
+}
+
 function fallbackAnalyze(payload: AnalyzePayload): AiComment {
   const lastProjection = payload.projectionRows?.[payload.projectionRows.length - 1];
   const deliveryCount = lastProjection?.deliveryCount || 4;
@@ -83,13 +111,14 @@ function fallbackAnalyze(payload: AnalyzePayload): AiComment {
   const finalRepeatRatio = Math.round(lastProjection?.repeatRatio || repeatRatio);
   const finalDirectRatio = Math.round(lastProjection?.directRatio || directRatio);
   const finalMonthlyDifference = lastProjection?.monthlyDifference || payload.result.monthlyImpact;
+  const labels = getIndustryMessageLabels(payload.industry);
 
   return {
     improvements: [
-      "宿泊時・チェックアウト時のスタッフ声かけを強化",
-      "登録特典として宿泊割引・館内利用特典・ポイント付与を用意",
-      "館内POP・客室内案内・フロント周辺にQRコードを設置",
-      `月2〜${deliveryCount}回、季節プラン・直前空室・連泊プランを配信`,
+      `${labels.visitAfter}のスタッフ声かけを強化`,
+      "登録特典として限定特典・施設内利用特典・ポイント付与を用意",
+      labels.registrationTouchpoints,
+      `月2〜${deliveryCount}回、${labels.seasonalDelivery}を配信`,
       "LINE経由予約数・登録数・配信反応を毎月確認し改善",
     ],
     priorityMeasures: [
@@ -100,18 +129,18 @@ function fallbackAnalyze(payload: AnalyzePayload): AiComment {
     ],
     commoActions: [
       "スタッフ向けのLINE登録案内トークを作成",
-      "館内POP・QRコード付き案内物を作成",
+      "QRコード付き案内物を作成",
       "初回登録特典を設計",
       "月次配信カレンダーを作成",
       "配信結果をもとに改善提案を実施",
     ],
     salesTalk: `${facilityName}は、${externalSiteLabel}予約比率が${Math.round(
       thirdPartyRatio,
-    )}%と高く、予約獲得の多くを外部サイトに依存している状態です。公式LINE導入により、宿泊後のお客様と継続的につながり、次回予約や公式予約への誘導を強化できます。本試算では、LINE経由の直接予約だけでなく、宿泊後の再来訪促進や平均予約単価の改善も含めて効果を見ています。
+    )}%と高く、予約獲得の多くを外部サイトに依存している状態です。公式LINE導入により、${labels.visitAfter}のお客様と継続的につながり、次回予約や公式予約への誘導を強化できます。本試算では、LINE経由の直接予約だけでなく、${labels.visitAfter}の再来訪促進や平均予約単価の改善も含めて効果を見ています。
 
 12ヶ月後は、LINE友だち数が${finalLineFriends}人、リピーター率が${Math.round(
       repeatRatio,
-    )}%から${finalRepeatRatio}%、公式HP予約率が${Math.round(
+    )}%から${finalRepeatRatio}%、${labels.directRateLabel}が${Math.round(
       directRatio,
     )}%から${finalDirectRatio}%へ改善する想定です。
 
@@ -119,7 +148,7 @@ function fallbackAnalyze(payload: AnalyzePayload): AiComment {
       finalMonthlyDifference,
     )}の収益改善が見込まれます。
 
-まずは、スタッフの声かけ、館内POP内のQRコード設置、登録特典の用意から始め、季節プランや空室案内の配信でリピーター施策を強化していきましょう。`,
+まずは、スタッフの声かけ、QRコード付き案内物の設置、登録特典の用意から始め、${labels.seasonalDelivery}の配信でリピーター施策を強化していきましょう。`,
   };
 }
 
@@ -159,7 +188,7 @@ export async function POST(request: Request) {
           {
             role: "system",
             content:
-              "あなたはcommo.の営業支援AIです。ホテル・ゴルフ場・飲食店向けに、公式LINE導入後の収支シミュレーションを踏まえ、OTAや外部予約サイトで集客した顧客を公式LINEでリピーター化し、次回以降の公式予約へつなげる提案を日本語で簡潔に作成してください。施設名が入力されている場合は「施設名＋様」を使い、「貴ホテル」は使わないでください。「commo.の公式LINE導入により」は使わず、「公式LINE導入により」または「commo.を活用した公式LINE導入により」と書いてください。「特別割引」は使わず、「限定特典」または「季節限定プラン」を使ってください。OTA手数料削減を含む金額は「売上増加」ではなく「収益改善」または「収支改善」と表現してください。OTA手数料削減はLINE経由予約売上とは別に、OTA経由だった予約の一部が公式HP予約へ転換した場合の手数料削減として説明してください。末尾に「ご不明点があればお手伝いいたします。」は入れないでください。改善提案には、スタッフ声かけ、館内POP・QRコード、登録特典、季節プラン・空室案内・連泊プラン配信、公式・LINE経由予約への段階的誘導を含めてください。必ずJSONのみを返してください。",
+              "あなたはcommo.の営業支援AIです。ホテル・ゴルフ場・飲食店向けに、公式LINE導入後の収支シミュレーションを踏まえ、OTA・外部予約サイト・グルメサイトで集客した顧客を公式LINEでリピーター化し、次回以降の公式予約へつなげる提案を日本語で簡潔に作成してください。施設名が入力されている場合は「施設名＋様」を使い、「貴ホテル」は使わないでください。「commo.の公式LINE導入により」は使わず、「公式LINE導入により」または「commo.を活用した公式LINE導入により」と書いてください。「特別割引」は使わず、「限定特典」または「季節限定プラン」を使ってください。OTA手数料削減を含む金額は「売上増加」ではなく「収益改善」または「収支改善」と表現してください。OTA手数料削減はLINE経由予約売上とは別に、外部予約経由だった予約の一部が公式・自社予約へ転換した場合の手数料削減として説明してください。末尾に「ご不明点があればお手伝いいたします。」は入れないでください。改善提案には、スタッフ声かけ、QRコード付き案内物、登録特典、公式・LINE経由予約への段階的誘導を含めてください。ホテルでは季節プラン・空室案内・連泊プラン、ゴルフ場では季節プラン・空き予約枠・コンペ案内、飲食店では限定メニュー・空席案内・予約枠案内を使い分け、「空室」はホテル以外では使わないでください。必ずJSONのみを返してください。",
           },
           {
             role: "user",

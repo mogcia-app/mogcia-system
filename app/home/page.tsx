@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
+import { otherPreviewImages, snsPreviewImages } from "@/app/sns/gallery-data";
 import { portfolioItems, portfolioShelves } from "@/lib/portfolio-data";
 
 export default function Home() {
@@ -189,6 +190,81 @@ export default function Home() {
             </section>
           ))}
         </div>
+
+        <section className="space-y-10 border-t border-black/8 pt-12">
+          <div className="space-y-2">
+            <p className="text-[11px] tracking-[0.22em] text-black/35">
+              SNS PREVIEW
+            </p>
+            <h2 className="text-[1.85rem] font-light tracking-[-0.03em]">
+              SNS / others
+            </h2>
+          </div>
+
+          <div className="grid gap-8 lg:grid-cols-[160px_1fr] lg:gap-14">
+            <div>
+              <p className="text-sm tracking-[0.18em] text-black/35">
+                CATEGORY
+              </p>
+              <h3 className="mt-2 text-2xl leading-tight font-medium tracking-[-0.02em] text-black">
+                SNS
+              </h3>
+            </div>
+            <div className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                {snsPreviewImages.map((image) => (
+                  <Image
+                    key={image.src}
+                    src={image.src}
+                    alt={image.alt}
+                    width={image.width}
+                    height={image.height}
+                    unoptimized
+                    className="w-full border border-black/8 bg-white"
+                  />
+                ))}
+              </div>
+              <Link
+                href="/sns/sns"
+                className="inline-flex border border-black/10 px-5 py-3 text-sm text-black transition hover:bg-black hover:text-white"
+              >
+                詳細を見る
+              </Link>
+            </div>
+          </div>
+
+          <div className="grid gap-8 border-t border-black/8 pt-10 lg:grid-cols-[160px_1fr] lg:gap-14">
+            <div>
+              <p className="text-sm tracking-[0.18em] text-black/35">
+                CATEGORY
+              </p>
+              <h3 className="mt-2 text-2xl leading-tight font-medium tracking-[-0.02em] text-black">
+                others
+              </h3>
+            </div>
+            <div className="space-y-5">
+              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+                {otherPreviewImages.map((image) => (
+                  <Image
+                    key={image.src}
+                    src={image.src}
+                    alt={image.alt}
+                    width={image.width}
+                    height={image.height}
+                    unoptimized
+                    className="w-full border border-black/8 bg-white"
+                  />
+                ))}
+              </div>
+              <Link
+                href="/sns/others"
+                className="inline-flex border border-black/10 px-5 py-3 text-sm text-black transition hover:bg-black hover:text-white"
+              >
+                詳細を見る
+              </Link>
+            </div>
+          </div>
+        </section>
 
         <section className="grid gap-8 border-t border-b border-black/8 py-10 text-black lg:grid-cols-[1fr_auto] lg:items-end">
           <div className="space-y-3">
