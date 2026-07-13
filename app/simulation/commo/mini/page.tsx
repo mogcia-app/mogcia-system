@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   ArrowRight,
   Building2,
@@ -40,6 +41,15 @@ type MiniPageDemo = {
   deliveryMessage: string;
   page: MiniPageContent;
 };
+
+const miniImages = [
+  "/mini/1.png",
+  "/mini/2.png",
+  "/mini/3.png",
+  "/mini/4.png",
+  "/mini/5.png",
+  "/mini/a6.png",
+] as const;
 
 const miniPageDemos: MiniPageDemo[] = [
   {
@@ -264,6 +274,7 @@ export default function CommoMiniPageDemo() {
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-14 px-6 py-10 sm:px-8 lg:px-10 lg:py-14">
         <HeroSection />
         <IntroSection />
+        <MiniImageGallery />
 
         <section className="grid gap-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(440px,1.1fr)] lg:items-start">
           <div className="space-y-5">
@@ -385,6 +396,72 @@ function IntroSection() {
   );
 }
 
+function MiniImageGallery() {
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+  return (
+    <section className="grid gap-8 border-b border-black/8 pb-12 lg:grid-cols-[180px_1fr] lg:gap-12">
+      <div>
+        <p className="text-sm tracking-[0.18em] text-black/35">MINI PAGE IMAGE</p>
+        <h2 className="mt-2 text-2xl leading-tight font-medium">
+          画像サンプル
+        </h2>
+      </div>
+      <div className="overflow-x-auto">
+        <div className="flex w-max gap-5 pb-2">
+        {miniImages.map((src, index) => (
+          <button
+            type="button"
+            key={src}
+            onClick={() => setSelectedImage(src)}
+            className="relative aspect-[9/16] w-[220px] shrink-0 overflow-hidden transition hover:-translate-y-1"
+            aria-label={`LINEミニページ画像サンプル ${index + 1} を拡大表示`}
+          >
+            <Image
+              src={src}
+              alt={`LINEミニページ画像サンプル ${index + 1}`}
+              fill
+              sizes="220px"
+              className="object-contain"
+              unoptimized
+            />
+          </button>
+        ))}
+        </div>
+      </div>
+      {selectedImage ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-5 py-8"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div
+            className="relative h-full max-h-[86vh] w-full max-w-[520px]"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Image
+              src={selectedImage}
+              alt="LINEミニページ画像サンプル拡大"
+              fill
+              sizes="520px"
+              className="object-contain"
+              unoptimized
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setSelectedImage(null)}
+            className="absolute top-5 right-5 rounded-full bg-white px-4 py-2 text-sm font-medium text-black transition hover:bg-black hover:text-white"
+          >
+            閉じる
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function MiniPageCard({
   demo,
   isActive,
@@ -403,7 +480,7 @@ function MiniPageCard({
     >
       <button type="button" onClick={onSelect} className="block w-full text-left">
         <div className="relative aspect-[4/3] overflow-hidden rounded-[18px] bg-[#eeeeee]">
-          <MiniThumbnailVisual />
+          <ImagePlaceholder />
           <div className="absolute top-5 left-5 rounded-full bg-white/80 px-3 py-1 text-[10px] font-medium tracking-[0.16em] text-black/50">
             {String(demo.id).padStart(2, "0")}
           </div>
@@ -474,14 +551,6 @@ function MiniPageContentView({ demo }: { demo: MiniPageDemo }) {
   );
 }
 
-function MiniThumbnailVisual() {
-  return (
-    <div className="absolute inset-0 flex items-center justify-center text-sm font-medium tracking-[0.12em] text-black/35">
-      ここに画像
-    </div>
-  );
-}
-
 function MiniPageHero({
   demo,
   content,
@@ -492,6 +561,7 @@ function MiniPageHero({
   if (demo.id === 2 || demo.id === 8) {
     return (
       <div className="p-5">
+        <ImagePlaceholder className="mb-4 aspect-[4/5] rounded-[22px]" />
         <div className="rounded-[22px] bg-white/80 p-4 shadow-sm">
           <p className="text-[11px] font-medium tracking-[0.18em] text-[#6d28d9]">
             {content.heroLabel}
@@ -531,6 +601,7 @@ function MiniPageHero({
   if (demo.id === 7) {
     return (
       <div className="p-5">
+        <ImagePlaceholder className="mb-5 aspect-[4/5] rounded-[22px]" />
         <p className="text-[11px] font-medium tracking-[0.18em] text-[#6d28d9]">
           {content.heroLabel}
         </p>
@@ -549,6 +620,7 @@ function MiniPageHero({
 
   return (
     <div className="min-h-[210px] p-6">
+      <ImagePlaceholder className="mb-5 aspect-[4/5] rounded-[22px]" />
       <p className="text-[11px] font-medium tracking-[0.18em] text-[#6d28d9]">
         {content.heroLabel}
       </p>
@@ -579,7 +651,7 @@ function MiniSectionContent({
     return (
       <>
         <div className="aspect-[16/9] bg-[#eeeeee]">
-          <SectionPlaceholder />
+          <ImagePlaceholder />
         </div>
         <div className="p-5">
           <p className="text-[11px] tracking-[0.18em] text-[#7c3aed]">
@@ -596,7 +668,7 @@ function MiniSectionContent({
     return (
       <div className="grid grid-cols-[74px_1fr] gap-4">
         <div className="rounded-2xl bg-[#eeeeee]">
-          <SectionPlaceholder compact />
+          <ImagePlaceholder className="h-full min-h-[74px] rounded-2xl text-[10px]" />
         </div>
         <div>
           <p className="text-[11px] tracking-[0.18em] text-[#7c3aed]">
@@ -616,23 +688,10 @@ function MiniSectionContent({
       </p>
       <h4 className="mt-2 text-lg font-medium">{section.title}</h4>
       <div className="mt-4 aspect-[16/9] rounded-2xl bg-[#eeeeee]">
-        <SectionPlaceholder />
+        <ImagePlaceholder className="rounded-2xl" />
       </div>
       <p className="mt-4 text-sm leading-7 text-black/58">{section.text}</p>
     </>
-  );
-}
-
-function SectionPlaceholder({ compact = false }: { compact?: boolean }) {
-  return (
-    <div
-      className={[
-        "flex h-full min-h-full items-center justify-center font-medium tracking-[0.12em] text-black/35",
-        compact ? "text-[10px]" : "text-sm",
-      ].join(" ")}
-    >
-      ここに画像
-    </div>
   );
 }
 
@@ -640,7 +699,7 @@ function ImagePlaceholder({ className = "" }: { className?: string }) {
   return (
     <div
       className={[
-        "flex items-center justify-center bg-[#eeeeee] text-xs font-medium tracking-[0.12em] text-black/35",
+        "flex h-full w-full items-center justify-center overflow-hidden bg-[#eeeeee] text-xs font-medium tracking-[0.12em] text-black/35",
         className,
       ].join(" ")}
     >
