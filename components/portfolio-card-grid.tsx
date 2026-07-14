@@ -15,7 +15,7 @@ export default function PortfolioCardGrid({
       {items.map((item) => (
         <Link
           key={item.slug}
-          href={`/portfolio/${item.slug}`}
+          href={item.href ?? `/portfolio/${item.slug}`}
           className="group flex min-h-[420px] flex-col overflow-hidden bg-white transition duration-300 hover:bg-[#fcfcfc]"
         >
           <div className="relative aspect-video bg-white">

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">TOEI HOTEL LP placeholder thumbnail</title>
+  <desc id="desc">A neutral placeholder thumbnail for a hotel landing page sample.</desc>
+  <rect width="1200" height="675" fill="#f4f4f2"/>
+  <rect x="128" y="78" width="944" height="519" rx="28" fill="#ffffff" stroke="#d9d7d1" stroke-width="2"/>
+  <rect x="128" y="78" width="944" height="62" rx="28" fill="#f9f8f4"/>
+  <circle cx="166" cy="109" r="8" fill="#d7d3ca"/>
+  <circle cx="194" cy="109" r="8" fill="#d7d3ca"/>
+  <circle cx="222" cy="109" r="8" fill="#d7d3ca"/>
+  <rect x="174" y="188" width="852" height="168" rx="18" fill="#e4e3df"/>
+  <text x="600" y="280" fill="#77756f" font-family="Arial, sans-serif" font-size="34" font-weight="700" text-anchor="middle">ここに画像</text>
+  <text x="600" y="424" fill="#1f2f3d" font-family="Arial, sans-serif" font-size="42" font-weight="700" text-anchor="middle">TOEI HOTEL LP</text>
+  <rect x="412" y="470" width="376" height="18" rx="9" fill="#d7d3ca"/>
+  <rect x="474" y="508" width="252" height="18" rx="9" fill="#d7d3ca"/>
+</svg>

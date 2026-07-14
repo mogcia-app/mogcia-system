@@ -120,6 +120,7 @@ export type DesignCollection = (typeof designCollections)[number];
 
 export type PortfolioItem = {
   slug: string;
+  href?: string;
   title: string;
   category: PortfolioCategory;
   assetKey: string;
@@ -302,6 +303,49 @@ export const portfolioItems: PortfolioItem[] = [
           "購入ボタンは画面の温度を壊さないようにアクセントカラーを限定利用しています。キャンペーン情報は目立たせつつ、過度な点滅や装飾を避けて信頼感を優先しました。",
       },
     ],
+  },
+  {
+    slug: "toeihotel-lp",
+    href: "/lp/toeihotel",
+    assetKey: "toeihotel-lp",
+    title: "TOEI HOTEL LP",
+    category: "LP",
+    colorTags: ["白", "ネイビー", "ベージュ"],
+    designTags: ["Trust", "Minimal"],
+    sidebarTags: ["LP", "ホテル・宿泊", "上品", "信頼", "白", "ネイビー"],
+    industry: "ホテル・宿泊",
+    mood: "端正 / 予約導線",
+    client: "TOEI HOTEL",
+    year: "2026",
+    catchCopy: "ホテルの魅力と予約導線を1ページで伝える紹介LP。",
+    summary:
+      "初めて訪れるユーザーにもホテルの特徴、客室、アクセス、問い合わせ導線が伝わるように整理したランディングページです。",
+    role: ["Direction", "Design", "Frontend"],
+    tools: ["Next.js", "TailwindCSS", "Figma"],
+    accent: "from-[#eef2f5] via-[#fbfaf7] to-[#ffffff]",
+    metrics: [
+      { label: "Sections", value: "7" },
+      { label: "Goal", value: "Reservation" },
+      { label: "Device", value: "Responsive" },
+    ],
+    sections: [
+      {
+        title: "First View",
+        body:
+          "ホテル名、滞在価値、LINE相談への導線をファーストビューにまとめ、検討初期のユーザーが迷わず情報へ進める構成にしています。",
+      },
+      {
+        title: "Information Design",
+        body:
+          "ホテル紹介、こだわり、客室、アクセスを番号付きで整理し、営業資料としても説明しやすい流れにしました。",
+      },
+      {
+        title: "Conversion",
+        body:
+          "ページ下部にLINE相談のCTAを置き、閲覧後の問い合わせや予約相談につながる導線を明確にしています。",
+      },
+    ],
+    thumbnailPath: "/lp/toeihotel/1.png",
   },
   {
     slug: "rosebloom",
