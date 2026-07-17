@@ -1,8 +1,19 @@
 "use client";
 
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDocs,
+  limit,
+  orderBy,
+  query,
+} from "firebase/firestore";
 import { CalendarDays, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+
+import { firebaseAuth, firebaseDb } from "@/lib/firebase";
 
 type SheetRow = {
   section: string;
@@ -15,7 +26,7 @@ type SheetRow = {
 type SheetBlock = {
   title: string;
   subtitle: string;
-  accent: "dark" | "blue";
+  accent: "dark" | "blue" | "purple";
   rows: SheetRow[];
 };
 
@@ -90,20 +101,76 @@ function getLastValueByLabels(savedSimulation: SavedSimulation, labels: string[]
 export default function SimulationHistoryList() {
   const [history, setHistory] = useState<SavedSimulation[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
+    let isMounted = true;
+
+    const loadLocalHistory = () => {
       try {
         const currentValue = localStorage.getItem(simulationHistoryStorageKey);
+        if (!isMounted) {
+          return;
+        }
         setHistory(currentValue ? (JSON.parse(currentValue) as SavedSimulation[]) : []);
       } catch {
-        setHistory([]);
+        if (isMounted) {
+          setHistory([]);
+        }
       } finally {
-        setIsLoaded(true);
+        if (isMounted) {
+          setIsLoaded(true);
+        }
       }
-    }, 0);
+    };
 
-    return () => window.clearTimeout(timeoutId);
+    const loadFirestoreHistory = async (uid: string) => {
+      try {
+        if (!firebaseDb) {
+          loadLocalHistory();
+          return;
+        }
+
+        const snapshot = await getDocs(
+          query(
+            collection(firebaseDb, "users", uid, "commoSimulationHistory"),
+            orderBy("savedAt", "desc"),
+            limit(50),
+          ),
+        );
+
+        if (!isMounted) {
+          return;
+        }
+
+        setHistory(
+          snapshot.docs.map((historyDoc) => ({
+            ...(historyDoc.data() as SavedSimulation),
+            id: historyDoc.id,
+          })),
+        );
+        setError("");
+        setIsLoaded(true);
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+        setError(
+          "Firebaseから保存済みシミュレーションを読み込めませんでした。端末内の保存データを表示します。",
+        );
+        loadLocalHistory();
+      }
+    };
+
+    if (firebaseDb && firebaseAuth?.currentUser) {
+      void loadFirestoreHistory(firebaseAuth.currentUser.uid);
+    } else {
+      loadLocalHistory();
+    }
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const sortedHistory = useMemo(
@@ -114,10 +181,28 @@ export default function SimulationHistoryList() {
     [history],
   );
 
-  const deleteSimulation = (id: string) => {
+  const deleteSimulation = async (id: string) => {
     const nextHistory = history.filter((item) => item.id !== id);
     setHistory(nextHistory);
-    localStorage.setItem(simulationHistoryStorageKey, JSON.stringify(nextHistory));
+
+    try {
+      if (firebaseDb && firebaseAuth?.currentUser) {
+        await deleteDoc(
+          doc(
+            firebaseDb,
+            "users",
+            firebaseAuth.currentUser.uid,
+            "commoSimulationHistory",
+            id,
+          ),
+        );
+        return;
+      }
+
+      localStorage.setItem(simulationHistoryStorageKey, JSON.stringify(nextHistory));
+    } catch {
+      setError("保存済みシミュレーションの削除に失敗しました。");
+    }
   };
 
   if (!isLoaded) {
@@ -149,6 +234,9 @@ export default function SimulationHistoryList() {
     <section className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
+          {error ? (
+            <p className="mb-3 text-sm leading-7 text-red-600">{error}</p>
+          ) : null}
           <p className="text-sm text-black/55">
             {sortedHistory.length}件保存されています。
           </p>

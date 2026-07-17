@@ -1,6 +1,7 @@
 
 "use client";
 
+import { collection, doc, setDoc } from "firebase/firestore";
 import {
   ArrowRight,
   CalendarDays,
@@ -16,6 +17,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
+
+import { firebaseAuth, firebaseDb } from "@/lib/firebase";
 
 type Industry = "hotel" | "golf" | "restaurant";
 type ScenarioKey = "line" | "repeat" | "direct" | "unitPrice";
@@ -197,12 +200,12 @@ const fieldsByIndustry: Record<Industry, FieldConfig[]> = {
     },
     {
       key: "monthlyCustomers",
-      label: "月間チェックアウト人数",
+      label: "月間利用者数",
       subLabel: "概算で構いません",
       suffix: "人",
       placeholder: "例：120",
       helpText:
-        "1ヶ月あたりにチェックアウトするお客様の人数を入力してください。LINE登録をご案内できる対象人数の計算に使用します。",
+        "1ヶ月あたりに利用するお客様の人数を入力してください。LINE登録をご案内できる対象人数の計算に使用します。",
       required: true,
     },
     {
@@ -408,7 +411,7 @@ const inputUsageGuidesByIndustry: Record<Industry, InputUsageGuide[]> = {
       body: "宿泊売上、OTA経由売上、OTA手数料の概算に使用します。",
     },
     {
-      title: "月間チェックアウト人数",
+      title: "月間利用者数",
       body: "LINE登録をご案内できる人数、再来訪候補者数の計算に使用します。",
     },
     {
@@ -574,7 +577,7 @@ const getLineRegistrationBasis = (
 
 function getCustomerLabel(industry: Industry) {
   return industry === "hotel"
-    ? "月間チェックアウト人数"
+    ? "月間利用者数"
     : industry === "golf"
       ? "月間来場者数"
       : "月間来店数";
@@ -1475,6 +1478,7 @@ export default function EstimateSimulator() {
   const [aiComment, setAiComment] = useState<AiComment | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [hasSimulationRun, setHasSimulationRun] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [isProposalCopied, setIsProposalCopied] = useState(false);
   const [error, setError] = useState("");
@@ -1700,8 +1704,12 @@ export default function EstimateSimulator() {
     await analyze();
   };
 
-  const saveSimulation = () => {
+  const saveSimulation = async () => {
     if (!industry || !hasSimulationRun) {
+      return;
+    }
+
+    if (isSaving) {
       return;
     }
 
@@ -1724,7 +1732,26 @@ export default function EstimateSimulator() {
       aiComment,
     };
 
+    setIsSaving(true);
+
     try {
+      if (firebaseDb && firebaseAuth?.currentUser) {
+        await setDoc(
+          doc(
+            collection(
+              firebaseDb,
+              "users",
+              firebaseAuth.currentUser.uid,
+              "commoSimulationHistory",
+            ),
+            savedSimulation.id,
+          ),
+          savedSimulation,
+        );
+        setIsSaved(true);
+        return;
+      }
+
       const currentValue = localStorage.getItem(simulationHistoryStorageKey);
       const currentHistory = currentValue
         ? (JSON.parse(currentValue) as SavedSimulation[])
@@ -1736,6 +1763,8 @@ export default function EstimateSimulator() {
       setIsSaved(true);
     } catch {
       setError("シミュレーション結果の保存に失敗しました。");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -2059,10 +2088,19 @@ export default function EstimateSimulator() {
                   <button
                     type="button"
                     onClick={saveSimulation}
-                    className="inline-flex h-10 items-center justify-center gap-2 bg-[#7c3aed] px-4 text-sm font-medium text-white transition hover:bg-[#6d28d9]"
+                    disabled={isSaving}
+                    className="inline-flex h-10 items-center justify-center gap-2 bg-[#7c3aed] px-4 text-sm font-medium text-white transition hover:bg-[#6d28d9] disabled:cursor-not-allowed disabled:bg-[#c4b5fd]"
                   >
-                    <Save size={16} />
-                    {isSaved ? "保存済み" : "シミュレーションを保存する"}
+                    {isSaving ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Save size={16} />
+                    )}
+                    {isSaving
+                      ? "保存中"
+                      : isSaved
+                        ? "保存済み"
+                        : "シミュレーションを保存する"}
                   </button>
                   <button
                     type="button"
@@ -2502,7 +2540,7 @@ function HotelHearingForm({
             )}室泊と試算されます。
           </p>
           <p>
-            月間チェックアウト人数が{formatNumber(
+            月間利用者数が{formatNumber(
               toNumber(inputs.monthlyCustomers),
             )}人の場合、{roomNightCheck.stayType}として計算されます。
           </p>
@@ -2711,7 +2749,7 @@ function CalculationBasisBox({
   const lineReservationRate = deliveryReservationRateByIndustry[industry] * 100;
   const customerLabel =
     industry === "hotel"
-      ? "月間チェックアウト人数"
+      ? "月間利用者数"
       : industry === "golf"
         ? "月間来場者数"
         : "月間来店数";
