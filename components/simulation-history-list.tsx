@@ -38,6 +38,7 @@ type AiComment = {
 };
 
 type SavedSimulation = {
+  isDraft?: boolean;
   id: string;
   savedAt: string;
   industryLabel: string;
@@ -50,8 +51,6 @@ type SavedSimulation = {
   sheetBlock: SheetBlock;
   aiComment: AiComment | null;
 };
-
-const simulationHistoryStorageKey = "commo-simulation-history";
 
 const formatYen = (value: number) =>
   new Intl.NumberFormat("ja-JP", {
@@ -106,28 +105,11 @@ export default function SimulationHistoryList() {
   useEffect(() => {
     let isMounted = true;
 
-    const loadLocalHistory = () => {
-      try {
-        const currentValue = localStorage.getItem(simulationHistoryStorageKey);
-        if (!isMounted) {
-          return;
-        }
-        setHistory(currentValue ? (JSON.parse(currentValue) as SavedSimulation[]) : []);
-      } catch {
-        if (isMounted) {
-          setHistory([]);
-        }
-      } finally {
-        if (isMounted) {
-          setIsLoaded(true);
-        }
-      }
-    };
-
     const loadFirestoreHistory = async (uid: string) => {
       try {
         if (!firebaseDb) {
-          loadLocalHistory();
+          setHistory([]);
+          setIsLoaded(true);
           return;
         }
 
@@ -144,10 +126,12 @@ export default function SimulationHistoryList() {
         }
 
         setHistory(
-          snapshot.docs.map((historyDoc) => ({
-            ...(historyDoc.data() as SavedSimulation),
-            id: historyDoc.id,
-          })),
+          snapshot.docs
+            .map((historyDoc) => ({
+              ...(historyDoc.data() as SavedSimulation),
+              id: historyDoc.id,
+            }))
+            .filter((item) => !item.isDraft && item.savedAt),
         );
         setError("");
         setIsLoaded(true);
@@ -156,16 +140,23 @@ export default function SimulationHistoryList() {
           return;
         }
         setError(
-          "Firebaseから保存済みシミュレーションを読み込めませんでした。端末内の保存データを表示します。",
+          "Firebaseから保存済みシミュレーションを読み込めませんでした。",
         );
-        loadLocalHistory();
+        setHistory([]);
+        setIsLoaded(true);
       }
     };
 
     if (firebaseDb && firebaseAuth?.currentUser) {
       void loadFirestoreHistory(firebaseAuth.currentUser.uid);
     } else {
-      loadLocalHistory();
+      window.setTimeout(() => {
+        if (!isMounted) {
+          return;
+        }
+        setHistory([]);
+        setIsLoaded(true);
+      }, 0);
     }
 
     return () => {
@@ -199,7 +190,6 @@ export default function SimulationHistoryList() {
         return;
       }
 
-      localStorage.setItem(simulationHistoryStorageKey, JSON.stringify(nextHistory));
     } catch {
       setError("保存済みシミュレーションの削除に失敗しました。");
     }

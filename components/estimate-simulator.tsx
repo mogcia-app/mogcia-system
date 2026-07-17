@@ -1,12 +1,11 @@
 
 "use client";
 
-import { collection, doc, setDoc } from "firebase/firestore";
+import { collection, doc, getDoc, setDoc } from "firebase/firestore";
 import {
   ArrowRight,
   CalendarDays,
   ChevronDown,
-  Copy,
   Flag,
   Hotel,
   ListChecks,
@@ -16,13 +15,36 @@ import {
   Store,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import type { ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { firebaseAuth, firebaseDb } from "@/lib/firebase";
 
 type Industry = "hotel" | "golf" | "restaurant";
-type ScenarioKey = "line" | "repeat" | "direct" | "unitPrice";
+type ScenarioKey = "repeat";
+type PricingPlanKey = "basic" | "growth";
+type LineGrowthCaseKey = "cautious" | "standard" | "aggressive";
 type SimulationInputs = Record<string, string | number | string[]>;
+
+type EstimateSimulatorMode = "input" | "result";
+
+type SimulationDraft = {
+  isDraft?: boolean;
+  savedAt?: string;
+  industry: Industry;
+  inputsByIndustry: Record<Industry, SimulationInputs>;
+  selectedPricingPlan: PricingPlanKey;
+  feeReductionStartMonth: number;
+  feeReductionRate: number;
+};
+
+type SimulationAssumptions = {
+  feeReductionStartMonth: number;
+  feeReductionRate: number;
+  monthlyOperationCost: number;
+  pricingPlan: PricingPlanKey;
+};
 
 type SimulationResult = {
   currentRevenue: number;
@@ -51,10 +73,27 @@ type ProjectionRow = {
   lineFriends: number;
   monthlyNewLineFriends: number;
   deliveryCount: number;
+  allBroadcastMessages: number;
+  segmentedBroadcastMessages: number;
+  allBroadcastCost: number;
+  segmentedBroadcastCost: number;
+  messageCostSaving: number;
   deliveryReservationRate: number;
   estimatedReservations: number;
   lineReservationRevenue: number;
+  salesImprovement: number;
+  costImprovement: number;
+  activeLineFriends: number;
+  monthlyDeliveryAudience: number;
+  linkResponders: number;
+  reservationPageVisitors: number;
+  lineReservations: number;
+  surveyRespondents: number;
+  surveyUnanswered: number;
+  classifiedCustomers: number;
+  priorityCustomerCount: number;
   repeatRevenue: number;
+  vacantSlotRevenue: number;
   feeSaving: number;
   unitPriceIncreaseRevenue: number;
   monthlyProfit: number;
@@ -64,6 +103,30 @@ type ProjectionRow = {
   thirdPartyRatio: number;
   unitPrice: number;
   isAggressive: boolean;
+};
+
+type BenchmarkPoint = {
+  month: number;
+  projectedLineFriends: number;
+  benchmarkLineFriends: number;
+  projectedDirectRatio: number;
+  benchmarkDirectRatio: number;
+};
+
+type BenchmarkComparison = {
+  profile: string;
+  basis: string[];
+  points: BenchmarkPoint[];
+};
+
+type PricingPlanSummary = {
+  key: PricingPlanKey;
+  label: string;
+  monthlyOperationCost: number;
+  description: string;
+  annualCost: number;
+  cumulativeProfit: number;
+  breakEvenMonth: number | null;
 };
 
 type SheetRow = {
@@ -90,6 +153,8 @@ type AiComment = {
 };
 
 type SavedSimulation = {
+  simulationVersion?: number;
+  isDraft?: boolean;
   id: string;
   savedAt: string;
   industry: Industry;
@@ -99,6 +164,33 @@ type SavedSimulation = {
   result: SimulationResult;
   sheetBlock: SheetBlock;
   aiComment: AiComment | null;
+  assumptions?: SimulationAssumptions;
+  proposalData?: {
+    targetCustomers: string[];
+    priorityTargetCustomer: string;
+    improvementFocus: string;
+    improvementFocusOther?: string;
+    lineChannels: string[];
+    lineGrowthCase: string;
+    surveyRespondents: number;
+    classifiedCustomers: number;
+    additionalServices: string[];
+    additionalServiceUnitPrice: number;
+    additionalServiceUsageRate: number;
+    lineBlockRate?: number;
+    friendRepeatConversionRate?: number;
+    directBookingShiftRate?: number;
+    averageStayNights?: number;
+    monthlyBroadcastCount?: number;
+    segmentDeliveryRate?: number;
+    migrationRate: number;
+    migrationTargetMonth: number;
+    feeSaving: number;
+    reinvestmentItems: string[];
+    recommendations: string[];
+    diagnosis: string;
+    planSummaries: PricingPlanSummary[];
+  };
 };
 
 type FieldConfig = {
@@ -129,7 +221,6 @@ type SalesSummary = {
   diagnosis: string;
   priorities: string[];
   supportItems: string[];
-  salesTalk: string;
 };
 
 type Recommendation = {
@@ -137,6 +228,11 @@ type Recommendation = {
   title: string;
   lead: string;
   detail: string;
+  evidence: {
+    label: string;
+    value: string;
+    basis: string;
+  }[];
 };
 
 type FieldSection = {
@@ -213,7 +309,7 @@ const fieldsByIndustry: Record<Industry, FieldConfig[]> = {
       label: "OTA予約比率",
       suffix: "%",
       placeholder: "例：60",
-      helpText: "楽天トラベル、じゃらん、Booking.comなどの予約割合",
+      helpText: "外部予約サイト経由の予約割合",
       required: true,
     },
     {
@@ -320,6 +416,232 @@ const issueOptionsByIndustry: Record<Industry, string[]> = {
     "来店後に再来店を促す接点がない",
     "空席案内や限定メニューを届けきれていない",
   ],
+};
+
+const targetCustomerOptionsByIndustry: Record<Industry, string[]> = {
+  hotel: [
+    "ビジネス利用",
+    "観光利用",
+    "ゴルフ利用",
+    "大学、研究、学会関係",
+    "地元企業",
+    "家族旅行",
+    "カップル",
+    "長期滞在",
+    "団体利用",
+    "その他",
+  ],
+  golf: [
+    "平日利用者",
+    "土日利用者",
+    "若年層",
+    "女性ゴルファー",
+    "シニア",
+    "コンペ利用",
+    "初心者",
+    "休眠顧客",
+    "ビジター",
+    "その他",
+  ],
+  restaurant: [
+    "平日利用",
+    "ランチ利用",
+    "ディナー利用",
+    "家族利用",
+    "会社利用",
+    "記念日利用",
+    "観光客",
+    "テイクアウト利用",
+    "休眠顧客",
+    "その他",
+  ],
+};
+
+const improvementFocusOptionsByIndustry: Record<Industry, string[]> = {
+  hotel: [
+    "平日の稼働率",
+    "自社予約率",
+    "リピーター率",
+    "顧客情報の把握",
+    "LINE、SNSでの情報発信",
+    "電話、問い合わせ対応",
+    "レストラン、追加サービス利用",
+    "その他",
+  ],
+  golf: [
+    "平日の来場者数",
+    "リピーター率",
+    "ビジターの再来場",
+    "コンペ予約",
+    "休眠顧客への再案内",
+    "自社予約率",
+    "レストラン利用",
+    "その他",
+  ],
+  restaurant: [
+    "平日の来店数",
+    "リピーター率",
+    "予約数",
+    "休眠顧客への再案内",
+    "客単価",
+    "テイクアウト利用",
+    "イベント、記念日利用",
+    "その他",
+  ],
+};
+
+const additionalServiceOptionsByIndustry: Record<Industry, string[]> = {
+  hotel: [
+    "朝食",
+    "レストラン",
+    "アーリーチェックイン",
+    "レイトチェックアウト",
+    "客室アップグレード",
+    "連泊プラン",
+    "提携施設",
+    "追加サービスなし",
+    "その他",
+  ],
+  golf: [
+    "レストラン",
+    "練習場",
+    "追加ハーフ",
+    "コンペプラン",
+    "ショップ商品",
+    "レッスン",
+    "追加サービスなし",
+    "その他",
+  ],
+  restaurant: [
+    "コース料理",
+    "ドリンク",
+    "デザート",
+    "テイクアウト",
+    "記念日プラン",
+    "追加サービスなし",
+    "その他",
+  ],
+};
+
+const lineChannelOptions = [
+  "館内、客室、店内へのQRコード設置",
+  "受付での案内",
+  "精算時の案内",
+  "LINE登録特典",
+  "ホームページへの掲載",
+  "Instagram、SNSへの掲載",
+  "レストラン、共有スペースへのPOP設置",
+  "イベント、コンペ、団体利用時の案内",
+];
+
+const reinvestmentOptions = [
+  "朝食内容の充実",
+  "客室備品やアメニティの改善",
+  "LINE登録特典",
+  "平日限定キャンペーン",
+  "広告費への再投資",
+  "スタッフの業務負担軽減",
+  "施設設備の改善",
+  "その他",
+];
+
+const lineGrowthCases: Record<
+  LineGrowthCaseKey,
+  { label: string; rate: number; surveyResponseRate: number; description: string }
+> = {
+  cautious: {
+    label: "慎重ケース",
+    rate: 1,
+    surveyResponseRate: 35,
+    description: "QRコード設置など、受け身の導線を中心にした想定",
+  },
+  standard: {
+    label: "標準ケース",
+    rate: 3,
+    surveyResponseRate: 45,
+    description: "QRコード設置に加え、スタッフ案内を行う想定",
+  },
+  aggressive: {
+    label: "積極ケース",
+    rate: 5,
+    surveyResponseRate: 55,
+    description: "スタッフ案内と登録特典まで組み合わせる想定",
+  },
+};
+
+const lineBenchmarkDefaults = {
+  blockRate: 27,
+  friendRepeatConversionRate: 15,
+  directBookingShiftRate: 50,
+  averageStayNights: 1.5,
+  monthlyBroadcastCount: 4,
+  segmentDeliveryRate: 40,
+};
+
+const lineOfficialPlans = {
+  communication: {
+    label: "コミュニケーション",
+    monthlyCost: 0,
+    includedMessages: 200,
+  },
+  light: {
+    label: "ライト",
+    monthlyCost: 5000,
+    includedMessages: 5000,
+  },
+  standard: {
+    label: "スタンダード",
+    monthlyCost: 15000,
+    includedMessages: 30000,
+  },
+};
+
+const lineBenchmarkEvidence = [
+  {
+    label: "友だち追加の導線",
+    body: "公開されている公式アカウント活用事例では、友だち追加特典、QR/NFCなど摩擦の少ない導線、店頭・受付での案内を組み合わせることで友だち数が大きく伸びたケースがあります。",
+  },
+  {
+    label: "再来訪への転換",
+    body: "公開事例では、休眠顧客へのLINE配信後に約21%が短期間で再予約したケースがあります。宿泊業は来訪周期が長いため、本試算では初期値を保守的に15%としています。",
+  },
+  {
+    label: "仮説として調整する値",
+    body: "友だちからの再来訪率、直接予約へのシフト率、平均泊数は施設ごとの差が大きいため、商談中に合意しながら調整する前提値です。",
+  },
+];
+
+const lineFunnelByIndustry: Record<
+  Industry,
+  {
+    activeFriendRate: number;
+    monthlyDeliveryTargetRate: number;
+    linkReactionRate: number;
+    reservationPageVisitRate: number;
+    bookingConversionRate: number;
+  }
+> = {
+  hotel: {
+    activeFriendRate: 0.72,
+    monthlyDeliveryTargetRate: 0.42,
+    linkReactionRate: 0.12,
+    reservationPageVisitRate: 0.55,
+    bookingConversionRate: 0.18,
+  },
+  golf: {
+    activeFriendRate: 0.74,
+    monthlyDeliveryTargetRate: 0.45,
+    linkReactionRate: 0.13,
+    reservationPageVisitRate: 0.58,
+    bookingConversionRate: 0.2,
+  },
+  restaurant: {
+    activeFriendRate: 0.78,
+    monthlyDeliveryTargetRate: 0.5,
+    linkReactionRate: 0.15,
+    reservationPageVisitRate: 0.62,
+    bookingConversionRate: 0.22,
+  },
 };
 
 const hotelFieldSections: FieldSection[] = [
@@ -481,6 +803,22 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
     currentLineFriends: "",
     currentIssue: [],
     currentIssueFree: "",
+    targetCustomers: [],
+    priorityTargetCustomer: "",
+    improvementFocus: "",
+    improvementFocusOther: "",
+    lineChannels: [],
+    lineGrowthCase: "standard",
+    additionalServices: ["追加サービスなし"],
+    additionalServiceUsageRate: "",
+    additionalServiceUnitPrice: "",
+    lineBlockRate: lineBenchmarkDefaults.blockRate,
+    friendRepeatConversionRate: lineBenchmarkDefaults.friendRepeatConversionRate,
+    directBookingShiftRate: lineBenchmarkDefaults.directBookingShiftRate,
+    averageStayNights: lineBenchmarkDefaults.averageStayNights,
+    monthlyBroadcastCount: lineBenchmarkDefaults.monthlyBroadcastCount,
+    segmentDeliveryRate: lineBenchmarkDefaults.segmentDeliveryRate,
+    reinvestmentItems: [],
   },
   golf: {
     facilityName: "",
@@ -496,6 +834,22 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
     repeatRatio: "",
     currentIssue: [],
     currentIssueFree: "",
+    targetCustomers: [],
+    priorityTargetCustomer: "",
+    improvementFocus: "",
+    improvementFocusOther: "",
+    lineChannels: [],
+    lineGrowthCase: "standard",
+    additionalServices: ["追加サービスなし"],
+    additionalServiceUsageRate: "",
+    additionalServiceUnitPrice: "",
+    lineBlockRate: lineBenchmarkDefaults.blockRate,
+    friendRepeatConversionRate: lineBenchmarkDefaults.friendRepeatConversionRate,
+    directBookingShiftRate: lineBenchmarkDefaults.directBookingShiftRate,
+    averageStayNights: 1,
+    monthlyBroadcastCount: lineBenchmarkDefaults.monthlyBroadcastCount,
+    segmentDeliveryRate: lineBenchmarkDefaults.segmentDeliveryRate,
+    reinvestmentItems: [],
   },
   restaurant: {
     facilityName: "",
@@ -510,6 +864,22 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
     couponUsage: "",
     currentIssue: [],
     currentIssueFree: "",
+    targetCustomers: [],
+    priorityTargetCustomer: "",
+    improvementFocus: "",
+    improvementFocusOther: "",
+    lineChannels: [],
+    lineGrowthCase: "standard",
+    additionalServices: ["追加サービスなし"],
+    additionalServiceUsageRate: "",
+    additionalServiceUnitPrice: "",
+    lineBlockRate: lineBenchmarkDefaults.blockRate,
+    friendRepeatConversionRate: 10,
+    directBookingShiftRate: lineBenchmarkDefaults.directBookingShiftRate,
+    averageStayNights: 1,
+    monthlyBroadcastCount: lineBenchmarkDefaults.monthlyBroadcastCount,
+    segmentDeliveryRate: lineBenchmarkDefaults.segmentDeliveryRate,
+    reinvestmentItems: [],
   },
 };
 
@@ -517,10 +887,7 @@ const getFieldConfig = (industry: Industry, key: string) =>
   fieldsByIndustry[industry].find((field) => field.key === key);
 
 const initialScenario: Record<ScenarioKey, number> = {
-  line: 1.7,
   repeat: 10,
-  direct: 10,
-  unitPrice: 5,
 };
 
 const feeRateByIndustry: Record<Industry, number> = {
@@ -529,20 +896,25 @@ const feeRateByIndustry: Record<Industry, number> = {
   restaurant: 0.07,
 };
 
-const deliveryReservationRateByIndustry: Record<Industry, number> = {
-  hotel: 0.012,
-  golf: 0.014,
-  restaurant: 0.018,
-};
-
 const hotelAverageGuestsPerRoom = 1.5;
 const repeatRevenueAdjustmentFactor = 0.35;
-const conservativeImpactFactor = 0.75;
 const initialLineSetupCost = 150000;
-const monthlyLineOperationCost = 30000;
-const simulationHistoryStorageKey = "commo-simulation-history";
-
-const formatPercent = (value: number) => `${Math.round(value)}%`;
+const pricingPlans: Record<
+  PricingPlanKey,
+  { label: string; monthlyOperationCost: number; description: string }
+> = {
+  basic: {
+    label: "月額3万円プラン",
+    monthlyOperationCost: 30000,
+    description: "登録導線と月次配信を中心に始める想定",
+  },
+  growth: {
+    label: "月額5万円プラン",
+    monthlyOperationCost: 50000,
+    description: "配信改善や予約導線の運用を厚めに行う想定",
+  },
+};
+const simulationDraftCollectionKey = "commoSimulationHistory";
 
 const formatNumber = (value: number) =>
   new Intl.NumberFormat("ja-JP", {
@@ -555,25 +927,44 @@ const formatDecimalNumber = (value: number, digits = 1) =>
     maximumFractionDigits: digits,
   }).format(value);
 
+const formatPercent = (value: number) => `${formatDecimalNumber(value, 1)}%`;
+
 const formatApproxManYen = (value: number) =>
   `約${formatNumber(value / 10000)}万円`;
 
-const formatPlainYen = (value: number) => `${formatNumber(value)}円`;
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat("ja-JP", {
+    style: "currency",
+    currency: "JPY",
+    maximumFractionDigits: 0,
+  }).format(Math.max(Math.round(value), 0));
 
-const formatSignedYen = (value: number) =>
-  `${value > 0 ? "+" : ""}${formatNumber(value)}円`;
+const formatSignedApproxManYen = (value: number) =>
+  `${value >= 0 ? "+" : "-"}約${formatNumber(Math.abs(value) / 10000)}万円`;
 
 const getLineRegistrationBasis = (
   industry: Industry,
   inputs: SimulationInputs,
-  scenario: Record<ScenarioKey, number>,
 ) => {
   const customerLabel = getCustomerLabel(industry);
+  const lineCase = getLineGrowthCase(inputs);
 
   return `月間追加登録数は、${customerLabel}${formatNumber(
     getMonthlyCustomers(industry, inputs),
-  )}人 × LINE登録率${scenario.line.toFixed(1)}%で試算しています。`;
+  )}人 × LINE登録率${lineCase.rate.toFixed(
+    1,
+  )}%（${lineCase.label}）から、ブロック率${formatPercent(
+    getLineBlockRate(inputs),
+  )}を控除したネット友だち数で試算しています。`;
 };
+
+function encodeSimulationDraft(draft: SimulationDraft) {
+  return btoa(encodeURIComponent(JSON.stringify(draft)));
+}
+
+function decodeSimulationDraft(value: string) {
+  return JSON.parse(decodeURIComponent(atob(value))) as SimulationDraft;
+}
 
 function getCustomerLabel(industry: Industry) {
   return industry === "hotel"
@@ -619,6 +1010,10 @@ const isRatioField = (key: string) =>
     "repeatRatio",
     "newCustomerRatio",
     "couponUsage",
+    "lineBlockRate",
+    "friendRepeatConversionRate",
+    "directBookingShiftRate",
+    "segmentDeliveryRate",
   ].includes(key);
 
 const formatInputValue = (value: unknown) => {
@@ -628,14 +1023,6 @@ const formatInputValue = (value: unknown) => {
 
   return formatNumber(toNumber(value));
 };
-
-function getRouteRatioTotal(inputs: SimulationInputs) {
-  return (
-    toNumber(inputs.thirdPartyRatio) +
-    toNumber(inputs.directRatio) +
-    toNumber(inputs.phoneRatio)
-  );
-}
 
 function getLineAccountStatus(inputs: SimulationInputs) {
   const status = String(inputs.lineAccountStatus || "none");
@@ -659,10 +1046,189 @@ function getIssueSummary(inputs: SimulationInputs) {
   return issues.length ? issues.join("、") : "";
 }
 
-function getFacilityDisplayName(inputs: SimulationInputs) {
-  const facilityName = String(inputs.facilityName || "").trim();
+function getSelectedStrings(inputs: SimulationInputs, key: string) {
+  const value = inputs[key];
 
-  return facilityName ? `${facilityName}様` : "貴施設";
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+function getLineGrowthCase(inputs: SimulationInputs) {
+  const key = String(inputs.lineGrowthCase || "standard") as LineGrowthCaseKey;
+
+  return lineGrowthCases[key] ?? lineGrowthCases.standard;
+}
+
+function getSimulationAssumptionValue(
+  inputs: SimulationInputs,
+  key: string,
+  fallback: number,
+  max = 100,
+) {
+  const value = toNumber(inputs[key]);
+
+  if (!Number.isFinite(value) || value <= 0) {
+    return fallback;
+  }
+
+  return Math.min(Math.max(value, 0), max);
+}
+
+function getLineBlockRate(inputs: SimulationInputs) {
+  return getSimulationAssumptionValue(
+    inputs,
+    "lineBlockRate",
+    lineBenchmarkDefaults.blockRate,
+  );
+}
+
+function getFriendRepeatConversionRate(inputs: SimulationInputs) {
+  return getSimulationAssumptionValue(
+    inputs,
+    "friendRepeatConversionRate",
+    lineBenchmarkDefaults.friendRepeatConversionRate,
+  );
+}
+
+function getDirectBookingShiftRate(inputs: SimulationInputs) {
+  return getSimulationAssumptionValue(
+    inputs,
+    "directBookingShiftRate",
+    lineBenchmarkDefaults.directBookingShiftRate,
+  );
+}
+
+function getAverageStayNightsForSimulation(inputs: SimulationInputs) {
+  return getSimulationAssumptionValue(
+    inputs,
+    "averageStayNights",
+    lineBenchmarkDefaults.averageStayNights,
+    30,
+  );
+}
+
+function getMonthlyBroadcastCount(inputs: SimulationInputs) {
+  return getSimulationAssumptionValue(
+    inputs,
+    "monthlyBroadcastCount",
+    lineBenchmarkDefaults.monthlyBroadcastCount,
+    31,
+  );
+}
+
+function getSegmentDeliveryRate(inputs: SimulationInputs) {
+  return getSimulationAssumptionValue(
+    inputs,
+    "segmentDeliveryRate",
+    lineBenchmarkDefaults.segmentDeliveryRate,
+  );
+}
+
+function calculateLineOfficialCost(messageCount: number) {
+  const safeMessageCount = Math.max(Math.ceil(messageCount), 0);
+
+  if (safeMessageCount <= lineOfficialPlans.communication.includedMessages) {
+    return {
+      planLabel: lineOfficialPlans.communication.label,
+      cost: lineOfficialPlans.communication.monthlyCost,
+      includedMessages: lineOfficialPlans.communication.includedMessages,
+      extraCost: 0,
+    };
+  }
+
+  if (safeMessageCount <= lineOfficialPlans.light.includedMessages) {
+    return {
+      planLabel: lineOfficialPlans.light.label,
+      cost: lineOfficialPlans.light.monthlyCost,
+      includedMessages: lineOfficialPlans.light.includedMessages,
+      extraCost: 0,
+    };
+  }
+
+  if (safeMessageCount <= lineOfficialPlans.standard.includedMessages) {
+    return {
+      planLabel: lineOfficialPlans.standard.label,
+      cost: lineOfficialPlans.standard.monthlyCost,
+      includedMessages: lineOfficialPlans.standard.includedMessages,
+      extraCost: 0,
+    };
+  }
+
+  const extraMessages = safeMessageCount - lineOfficialPlans.standard.includedMessages;
+  const firstTierMessages = Math.min(extraMessages, 20000);
+  const secondTierMessages = Math.min(Math.max(extraMessages - 20000, 0), 50000);
+  const remainingMessages = Math.max(extraMessages - 70000, 0);
+  const extraCost =
+    firstTierMessages * 3 +
+    secondTierMessages * 2.8 +
+    remainingMessages * 2.6;
+
+  return {
+    planLabel: lineOfficialPlans.standard.label,
+    cost: lineOfficialPlans.standard.monthlyCost + extraCost,
+    includedMessages: lineOfficialPlans.standard.includedMessages,
+    extraCost,
+  };
+}
+
+function getRecommendedLineGrowthCase(inputs: SimulationInputs): LineGrowthCaseKey {
+  const channels = getSelectedStrings(inputs, "lineChannels");
+  const hasQr = channels.some((item) => item.includes("QRコード"));
+  const hasStaff =
+    channels.some((item) => item.includes("受付")) ||
+    channels.some((item) => item.includes("精算"));
+  const hasBenefit = channels.some((item) => item.includes("登録特典"));
+
+  if (hasQr && hasStaff && hasBenefit) {
+    return "aggressive";
+  }
+
+  if (hasQr && hasStaff) {
+    return "standard";
+  }
+
+  return "cautious";
+}
+
+function getAdditionalServiceRevenue(industry: Industry, inputs: SimulationInputs) {
+  const selectedServices = getSelectedStrings(inputs, "additionalServices");
+
+  if (
+    selectedServices.length === 0 ||
+    selectedServices.includes("追加サービスなし")
+  ) {
+    return 0;
+  }
+
+  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
+  const usageRate = Math.min(Math.max(toNumber(inputs.additionalServiceUsageRate), 0), 100) / 100;
+  const unitPrice = Math.max(toNumber(inputs.additionalServiceUnitPrice), 0);
+
+  return monthlyCustomers * usageRate * unitPrice;
+}
+
+function getCustomerSegmentEstimate(inputs: SimulationInputs, classifiedCustomers: number) {
+  const targetCustomers = getSelectedStrings(inputs, "targetCustomers");
+  const priorityTarget = String(inputs.priorityTargetCustomer || targetCustomers[0] || "");
+  const fallbackTargets = targetCustomers.length ? targetCustomers : ["未分類"];
+  const priorityCount = priorityTarget ? Math.round(classifiedCustomers * 0.45) : 0;
+  const remaining = Math.max(classifiedCustomers - priorityCount, 0);
+  const otherTargets = fallbackTargets.filter((item) => item !== priorityTarget);
+  const perOther = otherTargets.length ? Math.floor(remaining / otherTargets.length) : 0;
+  const segments: { label: string; value: number }[] = [];
+
+  if (priorityTarget) {
+    segments.push({ label: priorityTarget, value: priorityCount });
+  }
+
+  otherTargets.slice(0, 4).forEach((target, index) => {
+    const isLast = index === Math.min(otherTargets.length, 4) - 1;
+    segments.push({
+      label: target,
+      value: isLast ? Math.max(remaining - perOther * index, 0) : perOther,
+    });
+  });
+
+  return segments;
 }
 
 function getAverageUnitPrice(industry: Industry, inputs: SimulationInputs) {
@@ -952,15 +1518,57 @@ function getRecommendation(
           : score >= 2
             ? "一部施策から検討"
             : "現状確認を優先";
+  const evidence = [
+    {
+      label: `${labels.externalSiteLabel}予約比率`,
+      value: `${formatNumber(thirdPartyRatio)}%`,
+      basis:
+        thirdPartyRatio >= 50
+          ? "50%以上のため、外部予約への依存度が高い判定です"
+          : thirdPartyRatio >= 35
+            ? "35%以上のため、公式導線への転換余地があります"
+            : "35%未満のため、外部予約依存は比較的低めです",
+    },
+    {
+      label: labels.directRateLabel,
+      value: `${formatNumber(directRatio)}%`,
+      basis:
+        directRatio < 20
+          ? "20%未満のため、次回予約を公式導線へ戻す余地があります"
+          : "20%以上のため、公式導線は一定確保されています",
+    },
+    {
+      label: "リピーター率",
+      value: `${formatNumber(repeatRatio)}%`,
+      basis:
+        repeatRatio <= 25
+          ? "25%以下のため、再来訪の接点づくりを重視する判定です"
+          : "25%を超えているため、既存顧客の再来訪基盤があります",
+    },
+    {
+      label: "LINE接点",
+      value:
+        lineAccountStatus === "none"
+          ? "未導入"
+          : `${formatNumber(currentLineFriends)}人`,
+      basis:
+        lineAccountStatus === "none"
+          ? "未導入のため、宿泊後に直接届ける導線が未整備です"
+          : currentLineFriends < 100
+            ? "友だち数100人未満のため、運用拡大の余地があります"
+            : "既存のLINE接点を活用できる状態です",
+    },
+  ];
 
   return {
     score,
     title,
     lead:
       score >= 5
-        ? "公式LINE導入との相性が高い施設です"
-        : "公式LINE活用による改善余地があります",
-    detail: `${labels.externalSiteLabel}予約比率が高く、${labels.visitAfter}のお客様との接点が不足しています。公式LINEを活用することで、${labels.externalSiteLabel}で獲得したお客様を次回の${labels.directDestination}や再来訪へつなげる余地があります。`,
+        ? "入力値ベースでは、公式LINE導入の優先度が高い状態です"
+        : "入力値ベースでは、公式LINE活用による改善余地があります",
+    detail: `${labels.externalSiteLabel}予約比率、${labels.directRateLabel}、リピーター率、LINE接点の有無をもとに判定しています。${labels.externalSiteLabel}で獲得したお客様を、${labels.visitAfter}も自社で接点化し、次回の${labels.directDestination}や再来訪へつなげられるかを見ています。`,
+    evidence,
   };
 }
 
@@ -1021,9 +1629,7 @@ function getIntroductionReasons(industry: Industry, inputs: SimulationInputs) {
 function getSalesSummary(
   industry: Industry,
   inputs: SimulationInputs,
-  annualOtaCommission: number,
 ): SalesSummary {
-  const facilityName = getFacilityDisplayName(inputs);
   const thirdPartyRatio = formatPercent(toNumber(inputs.thirdPartyRatio));
   const externalSiteLabel =
     industry === "hotel"
@@ -1033,11 +1639,8 @@ function getSalesSummary(
         : "グルメサイト";
   const stayLabel =
     industry === "hotel" ? "宿泊後" : industry === "golf" ? "来場後" : "来店後";
-  const { infoDelivery, directDestination } = industryMessageLabels[industry];
+  const { directDestination } = industryMessageLabels[industry];
   const diagnosis = `${externalSiteLabel}予約比率が${thirdPartyRatio}と高く、${stayLabel}のお客様との接点づくりに改善余地があります。公式LINEを活用することで、${externalSiteLabel}で獲得したお客様と${stayLabel}もつながり、次回予約を${directDestination}へ誘導する仕組みをつくれます。`;
-  const salesTalk = `${facilityName}は${externalSiteLabel}予約比率が${thirdPartyRatio}で、${stayLabel}のお客様を次回の${directDestination}へつなげる仕組みに改善余地があります。現在の入力内容では、年間の${externalSiteLabel}手数料は${formatApproxManYen(
-    annualOtaCommission,
-  )}と試算されます。公式LINEを導入することで、${externalSiteLabel}で獲得したお客様と${stayLabel}もつながり、${infoDelivery}ようになります。まずはQRコード付き案内物を設置し、スタッフのお声がけと登録特典を組み合わせながら、${directDestination}へ誘導する仕組みを整えることをおすすめします。`;
 
   return {
     diagnosis,
@@ -1051,7 +1654,6 @@ function getSalesSummary(
       "スタッフ向け案内トークの作成",
       "配信内容と運用改善の支援",
     ],
-    salesTalk,
   };
 }
 
@@ -1059,44 +1661,65 @@ function calculateSimulation(
   industry: Industry,
   inputs: SimulationInputs,
   scenario: Record<ScenarioKey, number>,
+  assumptions: SimulationAssumptions,
 ): SimulationResult {
   const currentRevenue = getCurrentRevenue(industry, inputs);
   const monthlyCustomers = getMonthlyCustomers(industry, inputs);
   const unitPrice = getAverageUnitPrice(industry, inputs);
   const commissionRate = getCommissionRate(industry, inputs);
-  const currentThirdPartyRatio = toNumber(inputs.thirdPartyRatio);
-  const directIncreaseTarget = Math.min(scenario.direct, currentThirdPartyRatio);
-  const lineFriendsAfterYear = monthlyCustomers * (scenario.line / 100) * 12;
-  const improvedUnitPrice =
-    unitPrice * (1 + Math.min(scenario.unitPrice, industry === "hotel" ? 5 : 8) / 100);
-  const lineImpact =
-    lineFriendsAfterYear * deliveryReservationRateByIndustry[industry] * improvedUnitPrice;
-  const repeatImpact =
+  const lineCase = getLineGrowthCase(inputs);
+  const blockRate = getLineBlockRate(inputs) / 100;
+  const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs) / 100;
+  const directBookingShiftRate = getDirectBookingShiftRate(inputs) / 100;
+  const averageStayNights = getAverageStayNightsForSimulation(inputs);
+  const lineFriendsAfterYear =
+    monthlyCustomers * (lineCase.rate / 100) * 12 * (1 - blockRate);
+  const funnel = lineFunnelByIndustry[industry];
+  const estimatedLineReservations =
+    lineFriendsAfterYear *
+    funnel.activeFriendRate *
+    funnel.monthlyDeliveryTargetRate *
+    funnel.linkReactionRate *
+    funnel.reservationPageVisitRate *
+    funnel.bookingConversionRate;
+  const lineImpact = estimatedLineReservations * unitPrice;
+  const repeatRateImpact =
     monthlyCustomers *
     (Math.min(scenario.repeat, industry === "hotel" ? 10 : 15) / 100) *
-    improvedUnitPrice *
+    unitPrice *
     repeatRevenueAdjustmentFactor;
-  const feeSaving = currentRevenue * (directIncreaseTarget / 100) * commissionRate;
-  const directImpact = feeSaving;
-  const unitPriceImpact =
-    monthlyCustomers * (improvedUnitPrice - unitPrice) * (industry === "hotel" ? 0.25 : 0.35);
-  const rawMonthlyImpact = lineImpact + repeatImpact + directImpact + unitPriceImpact;
-  const monthlyImpact = Math.min(
-    rawMonthlyImpact * conservativeImpactFactor,
-    currentRevenue > 0 ? currentRevenue * 0.12 : rawMonthlyImpact * conservativeImpactFactor,
+  const additionalRepeatVisits = lineFriendsAfterYear * friendRepeatConversionRate;
+  const shiftedDirectReservations =
+    additionalRepeatVisits *
+    directBookingShiftRate *
+    (assumptions.feeReductionRate / 100);
+  const feeSaving =
+    (shiftedDirectReservations * averageStayNights * unitPrice * commissionRate) / 12;
+  const additionalServiceImpact =
+    assumptions.pricingPlan === "growth"
+      ? getAdditionalServiceRevenue(industry, inputs)
+      : 0;
+  const repeatImpact = lineImpact * 0.7 + repeatRateImpact;
+  const vacantSlotImpact = lineImpact * 0.3;
+  const revenueImprovement =
+    repeatImpact + vacantSlotImpact + additionalServiceImpact;
+  const costImprovement = assumptions.pricingPlan === "growth" ? feeSaving : 0;
+  const monthlyImpact = Math.max(
+    revenueImprovement + costImprovement,
+    0,
   );
   const labels = industryMessageLabels[industry];
 
   const priority = [
-    { label: "LINE登録導線の強化", value: lineImpact },
-    { label: "リピーター施策の強化", value: repeatImpact },
+    { label: "LINE登録導線とアンケートの整備", value: lineImpact },
+    { label: "再来訪につながるセグメント配信", value: repeatImpact },
     {
-      label: `公式予約転換による${labels.externalSiteLabel}手数料削減`,
-      value: directImpact,
+      label: `${labels.externalSiteLabel}予約の一部を自社予約へ移行`,
+      value: costImprovement,
     },
     {
-      label: `客単価アップ施策（${labels.seasonalDelivery}の活用）`,
-      value: unitPriceImpact,
+      label: "追加サービス案内",
+      value: additionalServiceImpact,
     },
   ]
     .sort((a, b) => b.value - a.value)
@@ -1110,8 +1733,8 @@ function calculateSimulation(
     feeSaving,
     lineImpact,
     repeatImpact,
-    directImpact,
-    unitPriceImpact,
+    directImpact: costImprovement,
+    unitPriceImpact: additionalServiceImpact,
     priority,
   };
 }
@@ -1145,6 +1768,7 @@ function buildProjectionRows(
   inputs: SimulationInputs,
   scenario: Record<ScenarioKey, number>,
   result: SimulationResult,
+  assumptions: SimulationAssumptions,
 ): ProjectionRow[] {
   const monthlyCustomers = getMonthlyCustomers(industry, inputs);
   const currentLineFriends = getCurrentLineFriends(inputs);
@@ -1153,13 +1777,29 @@ function buildProjectionRows(
   const currentThirdPartyRatio = toNumber(inputs.thirdPartyRatio);
   const currentUnitPrice = getAverageUnitPrice(industry, inputs);
   const commissionRate = getCommissionRate(industry, inputs);
-  const lineRegistrationRate = scenario.line / 100;
-  const deliveryReservationRate = deliveryReservationRateByIndustry[industry];
+  const lineCase = getLineGrowthCase(inputs);
+  const lineRegistrationRate = lineCase.rate / 100;
+  const blockRate = getLineBlockRate(inputs) / 100;
+  const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs) / 100;
+  const directBookingShiftRate = getDirectBookingShiftRate(inputs) / 100;
+  const averageStayNights = getAverageStayNightsForSimulation(inputs);
+  const monthlyBroadcastCount = getMonthlyBroadcastCount(inputs);
+  const segmentDeliveryRate = getSegmentDeliveryRate(inputs) / 100;
+  const funnel = lineFunnelByIndustry[industry];
+  const deliveryReservationRate =
+    funnel.activeFriendRate *
+    funnel.monthlyDeliveryTargetRate *
+    funnel.linkReactionRate *
+    funnel.reservationPageVisitRate *
+    funnel.bookingConversionRate;
   const maxRepeatImprovement = industry === "hotel" ? 10 : 15;
   const repeatImprovementTarget = Math.min(scenario.repeat, maxRepeatImprovement);
-  const unitPriceImprovementTarget =
-    Math.min(scenario.unitPrice, industry === "hotel" ? 5 : 8) / 100;
-  const directIncreaseTarget = Math.min(scenario.direct, currentThirdPartyRatio);
+  const monthlyOtaCommission =
+    result.currentRevenue * (currentThirdPartyRatio / 100) * commissionRate;
+  const monthlyAdditionalServiceRevenue =
+    assumptions.pricingPlan === "growth"
+      ? getAdditionalServiceRevenue(industry, inputs)
+      : 0;
 
   let cumulativeDifference = 0;
   let cumulativeProfit = 0;
@@ -1169,40 +1809,69 @@ function buildProjectionRows(
     const month = index + 1;
     const label = `${month}ヶ月目`;
     const ramp = getRamp(month);
-    const monthlyAddedLineFriends = monthlyCustomers * lineRegistrationRate;
-    const lineFriends = currentLineFriends + monthlyAddedLineFriends * month;
-    const improvedUnitPrice = currentUnitPrice * (1 + unitPriceImprovementTarget * ramp);
-    const estimatedReservations = lineFriends * deliveryReservationRate;
-    const lineReservationRevenue = estimatedReservations * improvedUnitPrice;
+    const monthlyGrossAddedLineFriends = monthlyCustomers * lineRegistrationRate;
+    const grossAddedLineFriends = monthlyGrossAddedLineFriends * month;
+    const lineFriends =
+      currentLineFriends + grossAddedLineFriends * (1 - blockRate);
+    const activeLineFriends = lineFriends * funnel.activeFriendRate;
+    const monthlyDeliveryAudience =
+      activeLineFriends * funnel.monthlyDeliveryTargetRate;
+    const linkResponders = monthlyDeliveryAudience * funnel.linkReactionRate;
+    const reservationPageVisitors =
+      linkResponders * funnel.reservationPageVisitRate;
+    const estimatedReservations =
+      reservationPageVisitors * funnel.bookingConversionRate;
+    const lineReservationRevenue = estimatedReservations * currentUnitPrice;
+    const lineRepeatReservationRevenue = lineReservationRevenue * 0.7;
+    const vacantSlotRevenue = lineReservationRevenue * 0.3;
     const repeatRateIncrease = (repeatImprovementTarget / 100) * ramp;
-    const repeatRevenue =
+    const repeatRateRevenue =
       monthlyCustomers *
       repeatRateIncrease *
-      improvedUnitPrice *
+      currentUnitPrice *
       repeatRevenueAdjustmentFactor;
-    const directIncrease = directIncreaseTarget * ramp;
-    const feeSaving = result.currentRevenue * (directIncrease / 100) * commissionRate;
-    const unitPriceIncreaseRevenue =
-      monthlyCustomers *
-      (improvedUnitPrice - currentUnitPrice) *
-      (industry === "hotel" ? 0.25 : 0.35);
-    const rawMonthlyDifference =
-      lineReservationRevenue + repeatRevenue + feeSaving + unitPriceIncreaseRevenue;
-    const conservativeMonthlyDifference =
-      rawMonthlyDifference * conservativeImpactFactor;
-    const monthlyDifference = Math.min(
-      conservativeMonthlyDifference,
-      result.currentRevenue > 0
-        ? result.currentRevenue * 0.12
-        : conservativeMonthlyDifference,
+    const repeatRevenue = lineRepeatReservationRevenue + repeatRateRevenue;
+    const feeReductionProgress = Math.min(
+      month / assumptions.feeReductionStartMonth,
+      1,
     );
+    const effectiveFeeReductionRate =
+      (assumptions.feeReductionRate / 100) * feeReductionProgress;
+    const directIncrease = currentThirdPartyRatio * effectiveFeeReductionRate;
+    const additionalRepeatVisitsFromLine =
+      Math.max(lineFriends - currentLineFriends, 0) * friendRepeatConversionRate;
+    const shiftedDirectReservations =
+      additionalRepeatVisitsFromLine *
+      directBookingShiftRate *
+      effectiveFeeReductionRate;
+    const feeSaving = Math.min(
+      shiftedDirectReservations * averageStayNights * currentUnitPrice * commissionRate,
+      monthlyOtaCommission * effectiveFeeReductionRate,
+    );
+    const salesImprovement =
+      repeatRevenue +
+      vacantSlotRevenue +
+      monthlyAdditionalServiceRevenue;
+    const costImprovement = assumptions.pricingPlan === "growth" ? feeSaving : 0;
+    const unitPriceIncreaseRevenue = monthlyAdditionalServiceRevenue;
+    const monthlyDifference = Math.max(salesImprovement + costImprovement, 0);
     cumulativeDifference += monthlyDifference;
     const monthlyNewLineFriends = Math.max(lineFriends - previousLineFriends, 0);
     previousLineFriends = lineFriends;
     const withLineMonthlyRevenue = result.currentRevenue + monthlyDifference;
     const deliveryCount = getMonthlyDeliveryCount(month);
+    const allBroadcastMessages = lineFriends * monthlyBroadcastCount;
+    const segmentedBroadcastMessages =
+      lineFriends * monthlyBroadcastCount * segmentDeliveryRate;
+    const allBroadcastCost = calculateLineOfficialCost(allBroadcastMessages).cost;
+    const segmentedBroadcastCost =
+      calculateLineOfficialCost(segmentedBroadcastMessages).cost;
+    const messageCostSaving = Math.max(
+      allBroadcastCost - segmentedBroadcastCost,
+      0,
+    );
     const monthlyCost =
-      monthlyLineOperationCost + (month === 1 ? initialLineSetupCost : 0);
+      assumptions.monthlyOperationCost + (month === 1 ? initialLineSetupCost : 0);
     const monthlyProfit = monthlyDifference - monthlyCost;
     cumulativeProfit += monthlyProfit;
 
@@ -1223,10 +1892,29 @@ function buildProjectionRows(
       lineFriends,
       monthlyNewLineFriends,
       deliveryCount,
+      allBroadcastMessages,
+      segmentedBroadcastMessages,
+      allBroadcastCost,
+      segmentedBroadcastCost,
+      messageCostSaving,
       deliveryReservationRate,
       estimatedReservations,
       lineReservationRevenue,
+      salesImprovement,
+      costImprovement,
+      activeLineFriends,
+      monthlyDeliveryAudience,
+      linkResponders,
+      reservationPageVisitors,
+      lineReservations: estimatedReservations,
+      surveyRespondents: lineFriends * (lineCase.surveyResponseRate / 100),
+      surveyUnanswered:
+        lineFriends * (1 - lineCase.surveyResponseRate / 100),
+      classifiedCustomers: lineFriends * (lineCase.surveyResponseRate / 100) * 0.9,
+      priorityCustomerCount:
+        lineFriends * (lineCase.surveyResponseRate / 100) * 0.9 * 0.45,
       repeatRevenue,
+      vacantSlotRevenue,
       feeSaving,
       unitPriceIncreaseRevenue,
       monthlyProfit,
@@ -1234,11 +1922,8 @@ function buildProjectionRows(
       repeatRatio: Math.min(currentRepeatRatio + repeatImprovementTarget * ramp, 100),
       directRatio: Math.min(currentDirectRatio + directIncrease, 100),
       thirdPartyRatio: Math.max(currentThirdPartyRatio - directIncrease, 0),
-      unitPrice: improvedUnitPrice,
-      isAggressive:
-        result.currentRevenue > 0
-          ? conservativeMonthlyDifference / result.currentRevenue > 0.15
-          : false,
+      unitPrice: currentUnitPrice,
+      isAggressive: result.currentRevenue > 0 ? monthlyDifference / result.currentRevenue > 0.15 : false,
     };
   });
 }
@@ -1256,37 +1941,146 @@ function buildCurrentProjection(industry: Industry, inputs: SimulationInputs, re
   };
 }
 
+function buildBenchmarkComparison(
+  industry: Industry,
+  inputs: SimulationInputs,
+  projectionRows: ProjectionRow[],
+  scenario: Record<ScenarioKey, number>,
+  assumptions: SimulationAssumptions,
+): BenchmarkComparison {
+  const labels = industryMessageLabels[industry];
+  const roomCount = toNumber(inputs.roomCount);
+  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
+  const currentLineFriends = getCurrentLineFriends(inputs);
+  const currentDirectRatio = toNumber(inputs.directRatio);
+  const thirdPartyRatio = toNumber(inputs.thirdPartyRatio);
+  const commissionRate = getCommissionRate(industry, inputs) * 100;
+  const lineCase = getLineGrowthCase(inputs);
+  const blockRate = getLineBlockRate(inputs) / 100;
+  const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs) / 100;
+  const directBookingShiftRate = getDirectBookingShiftRate(inputs) / 100;
+  const averageStayNights = getAverageStayNightsForSimulation(inputs);
+  const benchmarkLift = industry === "hotel" ? 1.15 : 1.1;
+  const monthlyGrossLineFriends =
+    monthlyCustomers * (lineCase.rate / 100);
+  const benchmarkMonthlyNetLineFriends =
+    monthlyGrossLineFriends * benchmarkLift * (1 - blockRate);
+
+  const points: BenchmarkPoint[] = [
+    {
+      month: 0,
+      projectedLineFriends: currentLineFriends,
+      benchmarkLineFriends: currentLineFriends,
+      projectedDirectRatio: currentDirectRatio,
+      benchmarkDirectRatio: currentDirectRatio,
+    },
+    ...projectionRows.map((row) => {
+      const feeReductionProgress = Math.min(
+        row.month / assumptions.feeReductionStartMonth,
+        1,
+      );
+      const benchmarkLineFriends =
+        currentLineFriends + benchmarkMonthlyNetLineFriends * row.month;
+      const benchmarkNetNewFriends = Math.max(
+        benchmarkLineFriends - currentLineFriends,
+        0,
+      );
+      const benchmarkShiftedReservations =
+        benchmarkNetNewFriends *
+        friendRepeatConversionRate *
+        directBookingShiftRate *
+        (assumptions.feeReductionRate / 100) *
+        feeReductionProgress;
+      const benchmarkDirectIncrease =
+        monthlyCustomers > 0
+          ? Math.min(
+              (benchmarkShiftedReservations * averageStayNights / monthlyCustomers) *
+                100,
+              thirdPartyRatio * (assumptions.feeReductionRate / 100) * feeReductionProgress,
+            )
+          : 0;
+
+      return {
+        month: row.month,
+        projectedLineFriends: row.lineFriends,
+        benchmarkLineFriends,
+        projectedDirectRatio: row.directRatio,
+        benchmarkDirectRatio: Math.min(
+          currentDirectRatio + benchmarkDirectIncrease,
+          100,
+        ),
+      };
+    }),
+  ];
+
+  return {
+    profile:
+      industry === "hotel"
+        ? `同規模施設の参考推移：客室数${formatNumber(roomCount)}室前後・${labels.externalSiteLabel}比率${formatPercent(
+            thirdPartyRatio,
+          )}・手数料率${formatPercent(commissionRate)}に近い仮想モデル`
+        : `同規模施設の参考推移：${labels.externalSiteLabel}比率${formatPercent(
+            thirdPartyRatio,
+          )}・月間利用者数が近い仮想モデル`,
+    basis: [
+      "実在施設の実績値ではなく、入力条件をもとに作成した仮想比較モデルです",
+      `LINE友だち数は、${lineCase.label}${formatPercent(
+        lineCase.rate,
+      )}で追加された人数からブロック率${formatPercent(
+        blockRate * 100,
+      )}を控除し、同規模施設で導線整備がやや進んだケースとして${formatPercent(
+        (benchmarkLift - 1) * 100,
+      )}上振れさせています`,
+      `${labels.directRateLabel}は、ネット友だち数 × 再来訪率${formatPercent(
+        friendRepeatConversionRate * 100,
+      )} × 自社予約シフト率${formatPercent(
+        directBookingShiftRate * 100,
+      )} × 平均利用数${formatDecimalNumber(
+        averageStayNights,
+        1,
+      )}をもとに推定しています`,
+    ],
+    points,
+  };
+}
+
 function buildSheetBlock(
   rows: ProjectionRow[],
   industry: Industry,
   inputs: SimulationInputs,
   scenario: Record<ScenarioKey, number>,
+  assumptions: SimulationAssumptions,
 ): SheetBlock {
   const labels = industryMessageLabels[industry];
-  const lineReservationRate = deliveryReservationRateByIndustry[industry] * 100;
   const withLineRevenue = rows.map((row) => row.monthlyDifference);
+  const salesImprovements = rows.map((row) => row.salesImprovement);
+  const costImprovements = rows.map((row) => row.costImprovement);
   const monthlyNewLineFriends = rows.map((row) => row.monthlyNewLineFriends);
   const lineFriends = rows.map((row) => row.lineFriends);
+  const surveyRespondents = rows.map((row) => row.surveyRespondents);
+  const classifiedCustomers = rows.map((row) => row.classifiedCustomers);
+  const activeLineFriends = rows.map((row) => row.activeLineFriends);
+  const monthlyDeliveryAudience = rows.map((row) => row.monthlyDeliveryAudience);
+  const linkResponders = rows.map((row) => row.linkResponders);
+  const reservationPageVisitors = rows.map((row) => row.reservationPageVisitors);
   const deliveryCounts = rows.map((row) => row.deliveryCount);
+  const allBroadcastMessages = rows.map((row) => row.allBroadcastMessages);
+  const segmentedBroadcastMessages = rows.map((row) => row.segmentedBroadcastMessages);
+  const allBroadcastCosts = rows.map((row) => row.allBroadcastCost);
+  const segmentedBroadcastCosts = rows.map((row) => row.segmentedBroadcastCost);
+  const messageCostSavings = rows.map((row) => row.messageCostSaving);
   const deliveryReservationRates = rows.map(
     (row) => row.deliveryReservationRate * 100,
   );
   const estimatedReservations = rows.map((row) => row.estimatedReservations);
   const lineReservationRevenue = rows.map((row) => row.lineReservationRevenue);
   const repeatRevenue = rows.map((row) => row.repeatRevenue);
+  const vacantSlotRevenue = rows.map((row) => row.vacantSlotRevenue);
   const feeSavings = rows.map((row) => row.feeSaving);
   const unitPriceIncreaseRevenue = rows.map((row) => row.unitPriceIncreaseRevenue);
-  const conservativeAdjustments = rows.map(
-    (row) =>
-      row.monthlyDifference -
-      row.lineReservationRevenue -
-      row.repeatRevenue -
-      row.feeSaving -
-      row.unitPriceIncreaseRevenue,
-  );
   const growthRates = rows.map((row) => row.monthlyGrowthRate);
   const initialCosts = rows.map((row) => (row.month === 1 ? initialLineSetupCost : 0));
-  const operationCosts = rows.map(() => monthlyLineOperationCost);
+  const operationCosts = rows.map(() => assumptions.monthlyOperationCost);
   const totalCosts = rows.map(
     (_, index) => initialCosts[index] + operationCosts[index],
   );
@@ -1295,22 +2089,38 @@ function buildSheetBlock(
 
   return {
       title: "公式LINEあり",
-      subtitle: "月次改善額 / 初期設定15万円・月額運用3万円 / 金額単位：万円",
+      subtitle: `月次改善額 / 初期設定15万円・月額運用${formatManYenLabel(
+        assumptions.monthlyOperationCost,
+      )} / 金額単位：万円`,
       accent: "purple",
       rows: [
         {
-          section: "収益改善",
-          label: "月間収益改善見込み",
+          section: "改善効果",
+          label: "月間改善効果",
           values: withLineRevenue,
           emphasis: "positive",
-          detail: `その月単体で見込まれる収益改善額です。売上増加分と公式予約転換による${labels.externalSiteLabel}手数料削減を合わせて試算しています。`,
+          detail: "売上改善とコスト改善を合計した、その月単体の改善効果です。同じ予約を複数項目で重複計上しないよう、売上改善と手数料軽減を分けて計算しています。",
+        },
+        {
+          section: "収益改善",
+          label: "売上改善",
+          values: salesImprovements,
+          emphasis: "positive",
+          detail: "再来訪による追加予約、空室・空き枠への送客、追加サービス案内による売上を合計しています。",
+        },
+        {
+          section: "コスト改善",
+          label: "コスト改善",
+          values: costImprovements,
+          emphasis: "positive",
+          detail: `${labels.externalSiteLabel}予約の一部を自社予約へ移行した場合の手数料軽減などを合計しています。`,
         },
         {
           section: "LINE友だち",
           label: "月間追加登録数",
           values: monthlyNewLineFriends,
           format: "number",
-          detail: getLineRegistrationBasis(industry, inputs, scenario),
+          detail: getLineRegistrationBasis(industry, inputs),
         },
         {
           section: "LINE友だち",
@@ -1318,6 +2128,77 @@ function buildSheetBlock(
           values: lineFriends,
           format: "number",
           detail: "前月までの累計LINE友だち数に、当月の追加登録数を加算しています。",
+        },
+        {
+          section: "顧客基盤",
+          label: "アンケート回答者数",
+          values: surveyRespondents,
+          format: "number",
+          detail: "LINE友だち追加後にアンケートへ誘導し、回答してくれる人数の試算です。",
+        },
+        {
+          section: "顧客基盤",
+          label: "分類済み顧客数",
+          values: classifiedCustomers,
+          format: "number",
+          detail: "アンケート回答をもとに利用目的や顧客層を分類できる人数の試算です。",
+        },
+        {
+          section: "LINEファネル",
+          label: "有効友だち数",
+          values: activeLineFriends,
+          format: "number",
+        },
+        {
+          section: "LINEファネル",
+          label: "月間配信対象者数",
+          values: monthlyDeliveryAudience,
+          format: "number",
+        },
+        {
+          section: "LINEファネル",
+          label: "リンク反応者数",
+          values: linkResponders,
+          format: "number",
+        },
+        {
+          section: "LINEファネル",
+          label: "予約ページ訪問者数",
+          values: reservationPageVisitors,
+          format: "number",
+        },
+        {
+          section: "配信コスト",
+          label: "全員配信の月間通数",
+          values: allBroadcastMessages,
+          format: "number",
+          detail: "ネット友だち数 × 月間配信回数で試算しています。",
+        },
+        {
+          section: "配信コスト",
+          label: "セグメント配信の月間通数",
+          values: segmentedBroadcastMessages,
+          format: "number",
+          detail: "ネット友だち数 × 月間配信回数 × 平均セグメント配信率で試算しています。",
+        },
+        {
+          section: "配信コスト",
+          label: "全員配信のLINE月額費",
+          values: allBroadcastCosts,
+          emphasis: "negative",
+        },
+        {
+          section: "配信コスト",
+          label: "セグメント配信のLINE月額費",
+          values: segmentedBroadcastCosts,
+          emphasis: "negative",
+        },
+        {
+          section: "配信コスト",
+          label: "セグメント配信による費用差",
+          values: messageCostSavings,
+          emphasis: "positive",
+          detail: "全員配信とセグメント配信で必要になるLINE公式アカウント費用の差分です。",
         },
         {
           section: "計算内訳",
@@ -1337,9 +2218,7 @@ function buildSheetBlock(
           label: "LINE経由予約件数",
           values: estimatedReservations,
           format: "number",
-          detail: `LINE経由予約件数は、累計LINE友だち数 × LINE予約転換率${lineReservationRate.toFixed(
-            1,
-          )}%で試算しています。`,
+          detail: "LINE経由予約件数は、有効友だち数、月間配信対象者、リンク反応、予約ページ訪問、予約完了のファネルで試算しています。",
         },
         {
           section: "計算内訳",
@@ -1348,37 +2227,39 @@ function buildSheetBlock(
           emphasis: "positive",
         },
         {
-          section: "計算内訳",
+          section: "売上改善",
           label: "再来訪による純増売上",
           values: repeatRevenue,
           emphasis: "positive",
           detail: `${labels.visitAfter}の接点づくりや限定案内により、再来訪につながる割合が段階的に改善すると仮定しています。`,
         },
         {
-          section: `${labels.externalSiteLabel}手数料削減`,
-          label: `公式予約転換による${labels.externalSiteLabel}手数料削減`,
+          section: "売上改善",
+          label: "空室・空き枠への送客売上",
+          values: vacantSlotRevenue,
+          emphasis: "positive",
+          detail: "LINE配信から予約につながった分のうち、空室・空き枠の活用につながる売上として試算しています。",
+        },
+        {
+          section: "コスト改善",
+          label: "自社予約への移行で軽減できる手数料",
           values: feeSavings,
           emphasis: "positive",
           format: "manYenDecimal",
-          detail: `${labels.externalSiteLabel}経由だった予約の一部が、${labels.directDestination}へ転換した場合に削減できる手数料の試算です。LINE経由予約売上とは別で計算しています。`,
+          detail: `${assumptions.feeReductionStartMonth}ヶ月目に${labels.externalSiteLabel}予約の${formatPercent(
+            assumptions.feeReductionRate,
+          )}を自社予約へ移行できた場合の試算です。LINE経由予約売上とは別で計算しています。`,
         },
         {
-          section: "計算内訳",
-          label: "平均予約単価改善による売上増",
+          section: "売上改善",
+          label: "追加サービス売上",
           values: unitPriceIncreaseRevenue,
           emphasis: "positive",
-          detail: `${labels.seasonalDelivery}、アップセル提案などにより、平均予約単価の改善を見込んでいます。`,
+          detail: "選択した追加サービスを案内し、想定利用率と平均単価に応じて独立項目として試算しています。",
         },
         {
           section: "計算内訳",
-          label: "重複調整",
-          values: conservativeAdjustments,
-          emphasis: "negative",
-          detail: "LINE経由予約・リピーター売上・単価改善が重なって計算されすぎないよう、控えめに調整しています。",
-        },
-        {
-          section: "計算内訳",
-          label: "月間収益改善率",
+          label: "月間改善効果率",
           values: growthRates,
           format: "percent",
         },
@@ -1405,7 +2286,7 @@ function buildSheetBlock(
           label: "月間収支",
           values: grossProfits,
           emphasis: "strong",
-          detail: "その月の月間収益改善見込みから月額運用費を差し引いた金額です。初月は初期設定費を含むため、一時的にマイナス表示になる場合があります。",
+          detail: "その月の月間改善効果から月額運用費を差し引いた金額です。初月は初期設定費を含むため、一時的にマイナス表示になる場合があります。",
         },
         {
           section: "収支",
@@ -1418,89 +2299,196 @@ function buildSheetBlock(
     };
 }
 
-function makeFallbackComment(
-  industry: Industry,
-  inputs: SimulationInputs,
-  rows: ProjectionRow[],
-): AiComment {
-  const lastProjection = rows[rows.length - 1];
-  const facilityName = getFacilityDisplayName(inputs);
-  const thirdPartyRatio = formatPercent(toNumber(inputs.thirdPartyRatio));
-  const currentRepeatRatio = formatPercent(toNumber(inputs.repeatRatio));
-  const currentDirectRatio = formatPercent(toNumber(inputs.directRatio));
-  const finalMonthlyRevenueIncrease = formatApproxManYen(
-    lastProjection?.monthlyDifference || 0,
-  );
-  const industryLabel =
-    industry === "hotel" ? "OTA" : industry === "golf" ? "外部予約サイト" : "グルメサイト";
-  const messageLabels = industryMessageLabels[industry];
+function buildPricingPlanSummaries(rows: ProjectionRow[]): PricingPlanSummary[] {
+  return (
+    Object.entries(pricingPlans) as [
+      PricingPlanKey,
+      (typeof pricingPlans)[PricingPlanKey],
+    ][]
+  ).map(([key, plan]) => {
+    let cumulativeProfit = 0;
+    let breakEvenMonth: number | null = null;
 
-  return {
-    improvements: [
-      `${messageLabels.visitAfter}のスタッフ声かけを強化`,
-      "登録特典として限定特典・施設内利用特典・ポイント付与を用意",
-      messageLabels.registrationTouchpoints,
-      `月2〜4回、${messageLabels.seasonalDelivery}を配信`,
-      "LINE経由予約数・登録数・配信反応を毎月確認し改善",
-    ],
-    priorityMeasures: [
-      "LINE登録導線の整備",
-      "登録特典の設計",
-      "リピーター向け配信の開始",
-      "公式予約・直接予約への誘導強化",
-    ],
-    commoActions: [
-      "スタッフ向けのLINE登録案内トークを作成",
-      "QRコード付き案内物を作成",
-      "初回登録特典を設計",
-      "月次配信カレンダーを作成",
-      "配信結果をもとに改善提案を実施",
-    ],
-    salesTalk: `${facilityName}は、${industryLabel}予約比率が${thirdPartyRatio}で、外部予約経由の集客に依存している状態です。公式LINE導入により、${messageLabels.visitAfter}のお客様と継続的につながり、次回予約や公式予約への誘導を強化できます。本試算では、LINE経由の直接予約だけでなく、${messageLabels.visitAfter}の再来訪促進や平均予約単価の改善も含めて効果を見ています。
+    rows.forEach((row) => {
+      const monthlyCost =
+        plan.monthlyOperationCost +
+        (row.month === 1 ? initialLineSetupCost : 0);
+      const planMonthlyImprovement =
+        key === "basic"
+          ? row.repeatRevenue + row.vacantSlotRevenue
+          : row.salesImprovement + row.costImprovement;
+      cumulativeProfit += planMonthlyImprovement - monthlyCost;
 
-12ヶ月後は、LINE友だち数が${formatNumber(
-      lastProjection?.lineFriends || 0,
-    )}人、リピーター率が${currentRepeatRatio}から${formatPercent(
-      lastProjection?.repeatRatio || 0,
-    )}、${messageLabels.directRateLabel}が${currentDirectRatio}から${formatPercent(
-      lastProjection?.directRatio || 0,
-    )}へ改善する想定です。12ヶ月後には月間${finalMonthlyRevenueIncrease}の収益改善が見込まれます。
+      if (breakEvenMonth === null && cumulativeProfit >= 0) {
+        breakEvenMonth = row.month;
+      }
+    });
 
-まずは、スタッフの声かけ、QRコード付き案内物の設置、登録特典の用意から始め、${messageLabels.seasonalDelivery}の配信でリピーター施策を強化していきましょう。`,
-  };
+    return {
+      key,
+      label: plan.label,
+      monthlyOperationCost: plan.monthlyOperationCost,
+      description: plan.description,
+      annualCost: initialLineSetupCost + plan.monthlyOperationCost * 12,
+      cumulativeProfit,
+      breakEvenMonth,
+    };
+  });
 }
 
-export default function EstimateSimulator() {
-  const [industry, setIndustry] = useState<Industry | null>(null);
+export default function EstimateSimulator({
+  mode = "input",
+}: {
+  mode?: EstimateSimulatorMode;
+}) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const resultId = searchParams.get("id");
+  const resultData = searchParams.get("data");
+  const decodedResultDraft = useMemo(() => {
+    if (mode !== "result" || !resultData) {
+      return null;
+    }
+
+    try {
+      return decodeSimulationDraft(resultData);
+    } catch {
+      return null;
+    }
+  }, [mode, resultData]);
+  const [industry, setIndustry] = useState<Industry | null>(
+    decodedResultDraft?.industry ?? null,
+  );
   const [inputsByIndustry, setInputsByIndustry] =
-    useState<Record<Industry, SimulationInputs>>(defaultsByIndustry);
+    useState<Record<Industry, SimulationInputs>>(
+      decodedResultDraft?.inputsByIndustry ?? defaultsByIndustry,
+    );
   const [scenario] = useState<Record<ScenarioKey, number>>(initialScenario);
   const [aiComment, setAiComment] = useState<AiComment | null>(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [hasSimulationRun, setHasSimulationRun] = useState(false);
+  const isAnalyzing = false;
+  const [hasSimulationRun, setHasSimulationRun] = useState(
+    Boolean(decodedResultDraft),
+  );
   const [isSaving, setIsSaving] = useState(false);
+  const [isRunningSimulation, setIsRunningSimulation] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
-  const [isProposalCopied, setIsProposalCopied] = useState(false);
-  const [error, setError] = useState("");
-  const [formError, setFormError] = useState("");
+  const [error, setError] = useState(
+    mode === "result" && resultData && !decodedResultDraft
+      ? "シミュレーション結果の読み込みに失敗しました。"
+      : "",
+  );
+  const [selectedPricingPlan, setSelectedPricingPlan] =
+    useState<PricingPlanKey>(decodedResultDraft?.selectedPricingPlan ?? "basic");
+  const [feeReductionStartMonth, setFeeReductionStartMonth] = useState(
+    decodedResultDraft?.feeReductionStartMonth ?? 6,
+  );
+  const [feeReductionRate, setFeeReductionRate] = useState(
+    decodedResultDraft?.feeReductionRate ?? 5,
+  );
   const [isDetailSimulationOpen, setIsDetailSimulationOpen] = useState(false);
   const [isCalculationBreakdownOpen, setIsCalculationBreakdownOpen] =
     useState(false);
 
+  useEffect(() => {
+    if (mode !== "result") {
+      return;
+    }
+
+    if (resultData) {
+      return;
+    }
+
+    if (!resultId || !firebaseDb || !firebaseAuth?.currentUser) {
+      return;
+    }
+
+    const db = firebaseDb;
+    const uid = firebaseAuth.currentUser.uid;
+
+    const loadDraft = async () => {
+      try {
+        const snapshot = await getDoc(
+          doc(
+            db,
+            "users",
+            uid,
+            simulationDraftCollectionKey,
+            resultId,
+          ),
+        );
+
+        if (!snapshot.exists()) {
+          return;
+        }
+
+        const draft = snapshot.data() as SimulationDraft;
+        setIndustry(draft.industry);
+        setInputsByIndustry(draft.inputsByIndustry);
+        setSelectedPricingPlan(draft.selectedPricingPlan);
+        setFeeReductionStartMonth(draft.feeReductionStartMonth);
+        setFeeReductionRate(draft.feeReductionRate);
+        setHasSimulationRun(true);
+      } catch {
+        setError("シミュレーション結果の読み込みに失敗しました。");
+      }
+    };
+
+    void loadDraft();
+  }, [mode, resultData, resultId]);
+
   const activeIndustry = industry ?? "hotel";
   const activeLabels = industryMessageLabels[activeIndustry];
   const inputs = inputsByIndustry[activeIndustry];
+  const activeAssumptions = useMemo<SimulationAssumptions>(
+    () => ({
+      feeReductionStartMonth,
+      feeReductionRate,
+      monthlyOperationCost:
+        pricingPlans[selectedPricingPlan].monthlyOperationCost,
+      pricingPlan: selectedPricingPlan,
+    }),
+    [feeReductionRate, feeReductionStartMonth, selectedPricingPlan],
+  );
   const result = useMemo(
-    () => calculateSimulation(activeIndustry, inputs, scenario),
-    [activeIndustry, inputs, scenario],
+    () => calculateSimulation(activeIndustry, inputs, scenario, activeAssumptions),
+    [activeIndustry, inputs, scenario, activeAssumptions],
   );
   const projectionRows = useMemo(
-    () => buildProjectionRows(activeIndustry, inputs, scenario, result),
-    [activeIndustry, inputs, scenario, result],
+    () =>
+      buildProjectionRows(
+        activeIndustry,
+        inputs,
+        scenario,
+        result,
+        activeAssumptions,
+      ),
+    [activeIndustry, inputs, scenario, result, activeAssumptions],
+  );
+  const benchmarkComparison = useMemo(
+    () =>
+      buildBenchmarkComparison(
+        activeIndustry,
+        inputs,
+        projectionRows,
+        scenario,
+        activeAssumptions,
+      ),
+    [activeIndustry, inputs, projectionRows, scenario, activeAssumptions],
   );
   const sheetBlock = useMemo(
-    () => buildSheetBlock(projectionRows, activeIndustry, inputs, scenario),
-    [projectionRows, activeIndustry, inputs, scenario],
+    () =>
+      buildSheetBlock(
+        projectionRows,
+        activeIndustry,
+        inputs,
+        scenario,
+        activeAssumptions,
+      ),
+    [projectionRows, activeIndustry, inputs, scenario, activeAssumptions],
+  );
+  const pricingPlanSummaries = useMemo(
+    () => buildPricingPlanSummaries(projectionRows),
+    [projectionRows],
   );
   const currentProjection = useMemo(
     () => buildCurrentProjection(activeIndustry, inputs, result),
@@ -1523,21 +2511,19 @@ export default function EstimateSimulator() {
     [activeIndustry, inputs],
   );
   const salesSummary = useMemo(
-    () => getSalesSummary(activeIndustry, inputs, annualOtaCommission),
-    [activeIndustry, inputs, annualOtaCommission],
+    () => getSalesSummary(activeIndustry, inputs),
+    [activeIndustry, inputs],
   );
-  const routeRatioTotal = useMemo(() => getRouteRatioTotal(inputs), [inputs]);
   const roomNightCheck = useMemo(() => getRoomNightCheck(inputs), [inputs]);
   const mainSheetRows = useMemo(
     () =>
       sheetBlock.rows.filter((row) =>
         [
-          "月間収益改善見込み",
+          "月間改善効果",
           "累計LINE友だち数",
-          "公式予約転換によるOTA手数料削減",
           "月間収支",
           "累計収支",
-        ].includes(row.label),
+        ].includes(row.label) || row.label.includes("軽減できる手数料"),
       ),
     [sheetBlock.rows],
   );
@@ -1551,25 +2537,64 @@ export default function EstimateSimulator() {
           "LINE経由予約件数",
           "LINE経由の新規・再来訪予約売上",
           "再来訪による純増売上",
-          "平均予約単価改善による売上増",
-          "公式予約転換によるOTA手数料削減",
-          "重複調整",
-          "月間収益改善率",
+          "空室・空き枠への送客売上",
+          "追加サービス売上",
+          "アンケート回答者数",
+          "分類済み顧客数",
+          "有効友だち数",
+          "月間配信対象者数",
+          "リンク反応者数",
+          "予約ページ訪問者数",
+          "全員配信の月間通数",
+          "セグメント配信の月間通数",
+          "全員配信のLINE月額費",
+          "セグメント配信のLINE月額費",
+          "セグメント配信による費用差",
+          "売上改善",
+          "コスト改善",
+          "月間改善効果率",
           "初期設定費",
           "月額運用費",
           "月間支出",
-        ].includes(row.label),
+        ].includes(row.label) || row.label.includes("軽減できる手数料"),
       ),
     [sheetBlock.rows],
   );
   const oneYearProjection = projectionRows[11];
+  const customerSegments = useMemo(
+    () =>
+      getCustomerSegmentEstimate(
+        inputs,
+        oneYearProjection?.classifiedCustomers || 0,
+      ),
+    [inputs, oneYearProjection?.classifiedCustomers],
+  );
+  const annualMigratedFeeSaving = useMemo(
+    () => (oneYearProjection?.feeSaving || 0) * 12,
+    [oneYearProjection?.feeSaving],
+  );
+  const selectedReinvestments = getSelectedStrings(inputs, "reinvestmentItems");
   const monthlyLineFriendIncrease = projectionRows[0]?.monthlyNewLineFriends || 0;
   const shouldShowAggressiveNote = oneYearProjection?.isAggressive;
   const visibleIndustryOptions = industry
     ? industryOptions.filter((option) => option.id === industry)
     : industryOptions;
 
-  const updateInput = (key: string, value: string, isText = false) => {
+  const updateInput = (key: string, value: string | string[], isText = false) => {
+    if (Array.isArray(value)) {
+      setInputsByIndustry((current) => ({
+        ...current,
+        [activeIndustry]: {
+          ...current[activeIndustry],
+          [key]: value,
+        },
+      }));
+      setHasSimulationRun(false);
+      setAiComment(null);
+      setIsSaved(false);
+      return;
+    }
+
     const sanitizedValue = isText ? value : parseNumericInput(value);
     const nextValue = isText
       ? sanitizedValue
@@ -1589,8 +2614,6 @@ export default function EstimateSimulator() {
     setHasSimulationRun(false);
     setAiComment(null);
     setIsSaved(false);
-    setIsProposalCopied(false);
-    setFormError("");
   };
 
   const updateLineAccountStatus = (value: string) => {
@@ -1606,8 +2629,6 @@ export default function EstimateSimulator() {
     setHasSimulationRun(false);
     setAiComment(null);
     setIsSaved(false);
-    setIsProposalCopied(false);
-    setFormError("");
   };
 
   const toggleIssue = (issue: string) => {
@@ -1630,78 +2651,39 @@ export default function EstimateSimulator() {
     setHasSimulationRun(false);
     setAiComment(null);
     setIsSaved(false);
-    setIsProposalCopied(false);
-    setFormError("");
   };
 
-  const analyze = async () => {
-    setIsAnalyzing(true);
-    setError("");
-
-    try {
-      const response = await fetch("/api/commo/simulation/analyze", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          industry: activeIndustry,
-          inputs: {
-            ...inputs,
-            currentIssue: getIssueSummary(inputs),
-          },
-          scenario,
-          result,
-          projectionRows: projectionRows.map((row) => ({
-            month: row.month,
-            lineFriends: row.lineFriends,
-            monthlyNewLineFriends: row.monthlyNewLineFriends,
-            deliveryCount: row.deliveryCount,
-            deliveryReservationRate: row.deliveryReservationRate,
-            estimatedReservations: row.estimatedReservations,
-            lineReservationRevenue: row.lineReservationRevenue,
-            repeatRatio: row.repeatRatio,
-            directRatio: row.directRatio,
-            unitPrice: row.unitPrice,
-            cumulativeProfit: row.cumulativeProfit,
-            monthlyProfit: row.monthlyProfit,
-            monthlyDifference: row.monthlyDifference,
-          })),
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("分析コメントの生成に失敗しました。");
-      }
-
-      const data = (await response.json()) as AiComment;
-      setAiComment(data);
-    } catch (caughtError) {
-      setAiComment(makeFallbackComment(activeIndustry, inputs, projectionRows));
-      setError(
-        caughtError instanceof Error
-          ? caughtError.message
-          : "分析コメントの生成に失敗しました。",
-      );
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  const runSimulation = async () => {
+  const runSimulation = () => {
     if (!industry) {
       return;
     }
 
-    if (activeIndustry === "hotel" && routeRatioTotal !== 100) {
-      setFormError(
-        `予約経路の合計が${formatNumber(routeRatioTotal)}%です。100%になるように調整してください。`,
-      );
-      return;
-    }
+    setIsRunningSimulation(true);
+    setError("");
 
-    setHasSimulationRun(true);
-    setIsSaved(false);
-    setIsProposalCopied(false);
-    await analyze();
+    try {
+      const draft: SimulationDraft = {
+        industry,
+        inputsByIndustry: {
+          ...defaultsByIndustry,
+          [industry]: inputsByIndustry[industry],
+        },
+        selectedPricingPlan,
+        feeReductionStartMonth,
+        feeReductionRate,
+      };
+
+      router.push(
+        `/simulation/commo/result?data=${encodeURIComponent(
+          encodeSimulationDraft(draft),
+        )}`,
+      );
+    } catch {
+      setError(
+        "シミュレーション結果の作成に失敗しました。入力内容を確認して、もう一度お試しください。",
+      );
+      setIsRunningSimulation(false);
+    }
   };
 
   const saveSimulation = async () => {
@@ -1714,11 +2696,16 @@ export default function EstimateSimulator() {
     }
 
     const industryOption = industryOptions.find((option) => option.id === industry);
-    const savedSimulation: SavedSimulation = {
-      id:
-        typeof crypto !== "undefined" && "randomUUID" in crypto
+    const savedSimulationId =
+      mode === "result" && resultId
+        ? resultId
+        : typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
-          : `${Date.now()}`,
+          : `${Date.now()}`;
+    const savedSimulation: SavedSimulation = {
+      simulationVersion: 2,
+      isDraft: false,
+      id: savedSimulationId,
       savedAt: new Date().toISOString(),
       industry,
       industryLabel: industryOption?.label ?? industry,
@@ -1730,35 +2717,55 @@ export default function EstimateSimulator() {
       result,
       sheetBlock,
       aiComment,
+      assumptions: {
+        ...activeAssumptions,
+      },
+      proposalData: {
+        targetCustomers: getSelectedStrings(inputs, "targetCustomers"),
+        priorityTargetCustomer: String(inputs.priorityTargetCustomer || ""),
+        improvementFocus: String(inputs.improvementFocus || ""),
+        improvementFocusOther: String(inputs.improvementFocusOther || ""),
+        lineChannels: getSelectedStrings(inputs, "lineChannels"),
+        lineGrowthCase: String(inputs.lineGrowthCase || "standard"),
+        surveyRespondents: oneYearProjection?.surveyRespondents || 0,
+        classifiedCustomers: oneYearProjection?.classifiedCustomers || 0,
+        additionalServices: getSelectedStrings(inputs, "additionalServices"),
+        additionalServiceUnitPrice: toNumber(inputs.additionalServiceUnitPrice),
+        additionalServiceUsageRate: toNumber(inputs.additionalServiceUsageRate),
+        lineBlockRate: getLineBlockRate(inputs),
+        friendRepeatConversionRate: getFriendRepeatConversionRate(inputs),
+        directBookingShiftRate: getDirectBookingShiftRate(inputs),
+        averageStayNights: getAverageStayNightsForSimulation(inputs),
+        monthlyBroadcastCount: getMonthlyBroadcastCount(inputs),
+        segmentDeliveryRate: getSegmentDeliveryRate(inputs),
+        migrationRate: feeReductionRate,
+        migrationTargetMonth: feeReductionStartMonth,
+        feeSaving: annualMigratedFeeSaving,
+        reinvestmentItems: selectedReinvestments,
+        recommendations: salesSummary.priorities,
+        diagnosis: salesSummary.diagnosis,
+        planSummaries: pricingPlanSummaries,
+      },
     };
 
     setIsSaving(true);
 
     try {
-      if (firebaseDb && firebaseAuth?.currentUser) {
-        await setDoc(
-          doc(
-            collection(
-              firebaseDb,
-              "users",
-              firebaseAuth.currentUser.uid,
-              "commoSimulationHistory",
-            ),
-            savedSimulation.id,
-          ),
-          savedSimulation,
-        );
-        setIsSaved(true);
-        return;
+      if (!firebaseDb || !firebaseAuth?.currentUser) {
+        throw new Error("Firestoreに接続できません。");
       }
 
-      const currentValue = localStorage.getItem(simulationHistoryStorageKey);
-      const currentHistory = currentValue
-        ? (JSON.parse(currentValue) as SavedSimulation[])
-        : [];
-      localStorage.setItem(
-        simulationHistoryStorageKey,
-        JSON.stringify([savedSimulation, ...currentHistory].slice(0, 50)),
+      await setDoc(
+        doc(
+          collection(
+            firebaseDb,
+            "users",
+            firebaseAuth.currentUser.uid,
+            "commoSimulationHistory",
+          ),
+          savedSimulationId,
+        ),
+        savedSimulation,
       );
       setIsSaved(true);
     } catch {
@@ -1768,19 +2775,11 @@ export default function EstimateSimulator() {
     }
   };
 
-  const copySalesProposal = async () => {
-    try {
-      await navigator.clipboard.writeText(salesSummary.salesTalk);
-      setIsProposalCopied(true);
-    } catch {
-      setError("商談用提案文のコピーに失敗しました。");
-    }
-  };
-
   return (
     <section className="space-y-10">
       <section>
         <div className="space-y-8">
+          {mode === "input" ? (
           <section className="border border-black/8 bg-white">
             <div className="border-b border-black/8 px-5 py-4">
               <div>
@@ -1789,6 +2788,11 @@ export default function EstimateSimulator() {
                 </p>
                 <h2 className="mt-2 text-xl font-medium">業種別ヒアリング</h2>
               </div>
+              {error ? (
+                <p className="mt-3 border border-[#fecdd3] bg-[#fff1f2] px-3 py-2 text-xs leading-6 text-[#9f1239]">
+                  {error}
+                </p>
+              ) : null}
             </div>
 
             <div className="divide-y divide-black/8">
@@ -1808,8 +2812,6 @@ export default function EstimateSimulator() {
                         setAiComment(null);
                         setHasSimulationRun(false);
                         setIsSaved(false);
-                        setIsProposalCopied(false);
-                        setFormError("");
                       }}
                       className={[
                         "flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition",
@@ -1849,9 +2851,7 @@ export default function EstimateSimulator() {
                       option.id === "hotel" ? (
                         <HotelHearingForm
                           inputs={inputs}
-                          formError={formError}
-                          isAnalyzing={isAnalyzing}
-                          routeRatioTotal={routeRatioTotal}
+                          isAnalyzing={isAnalyzing || isRunningSimulation}
                           roomNightCheck={roomNightCheck}
                           onInputChange={updateInput}
                           onIssueToggle={toggleIssue}
@@ -1862,7 +2862,7 @@ export default function EstimateSimulator() {
                         <GenericHearingForm
                           industry={option.id}
                           inputs={inputs}
-                          isAnalyzing={isAnalyzing}
+                          isAnalyzing={isAnalyzing || isRunningSimulation}
                           onInputChange={updateInput}
                           onIssueToggle={toggleIssue}
                           onSubmit={runSimulation}
@@ -1874,8 +2874,9 @@ export default function EstimateSimulator() {
               })}
             </div>
           </section>
+          ) : null}
 
-          {industry && hasSimulationRun ? (
+          {mode === "result" && industry && hasSimulationRun ? (
             <>
           <section className="border border-black/8 bg-white">
             <div className="flex flex-col gap-4 border-b border-black/8 px-5 py-4 lg:flex-row lg:items-end lg:justify-between">
@@ -1885,7 +2886,7 @@ export default function EstimateSimulator() {
                   MONTHLY SIMULATION
                 </p>
                 <h2 className="mt-2 text-xl font-medium">
-                  公式LINE導入後の改善イメージ
+                  公式LINE活用提案シミュレーション
                 </h2>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row">
@@ -1916,7 +2917,7 @@ export default function EstimateSimulator() {
 
             <section className="border-b border-black/8 bg-white px-5 py-6">
               <p className="text-[11px] tracking-[0.18em] text-black/35">
-                1. 現在の状況
+                1. 施設診断の根拠
               </p>
               <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-4">
                 <CurrentMetricCard
@@ -1961,8 +2962,78 @@ export default function EstimateSimulator() {
 
             <section className="border-b border-black/8 bg-white px-5 py-6">
               <p className="text-[11px] tracking-[0.18em] text-black/35">
-                2. 12ヶ月後の改善イメージ
+                2. おすすめ施策
               </p>
+              <div className="mt-4 grid gap-px bg-black/8 lg:grid-cols-2">
+                <article className="bg-white p-5">
+                  <h3 className="text-base font-medium">施設診断コメント</h3>
+                  <p className="mt-4 text-sm leading-8 text-black/66">
+                    {salesSummary.diagnosis}
+                  </p>
+                </article>
+                <article className="bg-white p-5">
+                  <h3 className="text-base font-medium">優先施策</h3>
+                  <ol className="mt-4 space-y-3 text-sm leading-7 text-black/66">
+                    {salesSummary.priorities.map((priority, index) => (
+                      <li key={priority} className="flex gap-3">
+                        <span className="text-[#7c3aed]">{index + 1}.</span>
+                        <span>{priority}</span>
+                      </li>
+                    ))}
+                  </ol>
+                </article>
+              </div>
+              <SalesTalkAssist title="商談トーク例：施策提案">
+                まず誰を増やしたいかを決め、その顧客にLINEで何を届けるかを整理します。数字は契約を迫るためではなく、施策の優先順位を決めるために使います。
+              </SalesTalkAssist>
+            </section>
+
+	            <section className="border-b border-black/8 bg-white px-5 py-6">
+	              <p className="text-[11px] tracking-[0.18em] text-black/35">
+	                3. 顧客基盤・自社予約移行・改善内訳
+	              </p>
+              <FeeReductionScenarioControls
+                externalSiteLabel={activeLabels.externalSiteLabel}
+                startMonth={feeReductionStartMonth}
+                reductionRate={feeReductionRate}
+                onStartMonthChange={(value) => {
+                  setFeeReductionStartMonth(value);
+                  setIsSaved(false);
+                }}
+                onReductionRateChange={(value) => {
+                  setFeeReductionRate(value);
+                  setIsSaved(false);
+                }}
+              />
+              <BenchmarkComparisonCard
+                comparison={benchmarkComparison}
+                directRateLabel={activeLabels.directRateLabel}
+              />
+              <CustomerFoundationCard
+                row={oneYearProjection}
+                segments={customerSegments}
+                priorityTarget={String(inputs.priorityTargetCustomer || "")}
+              />
+              <LineMessagingCostCard
+                row={oneYearProjection}
+                inputs={inputs}
+                onInputChange={(key, value, isText) => {
+                  updateInput(key, value, isText);
+                  setIsSaved(false);
+                }}
+              />
+              <OtaMigrationCard
+                externalSiteLabel={activeLabels.externalSiteLabel}
+                annualCommission={annualOtaCommission}
+                migrationRate={feeReductionRate}
+                targetMonth={feeReductionStartMonth}
+                annualSaving={annualMigratedFeeSaving}
+                reinvestments={selectedReinvestments}
+                onReinvestmentChange={(values) => {
+                  updateInput("reinvestmentItems", values);
+                  setIsSaved(false);
+                }}
+              />
               <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-4">
                 <KpiShift
                   label="LINE友だち数"
@@ -1973,7 +3044,7 @@ export default function EstimateSimulator() {
                     monthlyLineFriendIncrease,
                   )}人ずつ増加 / ${getCustomerLabel(activeIndustry)}${formatNumber(
                     getMonthlyCustomers(activeIndustry, inputs),
-                  )}人 × 登録率${scenario.line.toFixed(1)}%で試算`}
+                  )}人 × 登録率${getLineGrowthCase(inputs).rate.toFixed(1)}%で試算`}
                 />
                 <KpiShift
                   label="リピーター率"
@@ -1988,12 +3059,14 @@ export default function EstimateSimulator() {
                   delta={`+${formatNumber(oneYearProjection.directRatio - currentProjection.directRatio)}ポイント`}
                 />
                 <KpiShift
-                  label="平均予約単価"
-                  before={formatPlainYen(currentProjection.unitPrice)}
-                  after={formatPlainYen(oneYearProjection.unitPrice)}
-                  delta={formatSignedYen(oneYearProjection.unitPrice - currentProjection.unitPrice)}
-                  note={`${activeLabels.seasonalDelivery}、アップセル、限定特典などを公式LINEで案内した場合の参考値です。`}
+                  label="アンケート回答者数"
+                  before="0人"
+                  after={`${formatNumber(oneYearProjection.surveyRespondents)}人`}
+                  delta={`+${formatNumber(oneYearProjection.surveyRespondents)}人`}
                 />
+              </div>
+              <div className="mt-4">
+                <ImprovementBreakdownCards row={oneYearProjection} />
               </div>
               <div className="mt-4 bg-[#f7f3ff] px-4 py-4 text-xs leading-7 text-[#4c1d95]">
                 <p className="font-medium">この試算は保守的な条件です</p>
@@ -2006,7 +3079,7 @@ export default function EstimateSimulator() {
 
             <section className="border-b border-black/8 bg-white px-5 py-6">
               <p className="text-[11px] tracking-[0.18em] text-black/35">
-                3. AI診断・優先施策
+                施策サポート
               </p>
               {error ? (
                 <p className="mt-3 text-xs text-black/45">
@@ -2015,7 +3088,7 @@ export default function EstimateSimulator() {
               ) : null}
               <div className="mt-4 grid gap-px bg-black/8 lg:grid-cols-2">
                 <article className="bg-white p-5">
-                  <h3 className="text-base font-medium">AI診断</h3>
+                  <h3 className="text-base font-medium">施設診断</h3>
                   {isAnalyzing ? (
                     <p className="mt-4 text-sm leading-8 text-black/55">
                       入力内容から診断コメントを作成しています。
@@ -2044,22 +3117,6 @@ export default function EstimateSimulator() {
                       <li key={item}>{item}</li>
                     ))}
                   </ul>
-                </article>
-                <article className="bg-white p-5">
-                  <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-sm font-medium">商談用提案文</h3>
-                    <button
-                      type="button"
-                      onClick={copySalesProposal}
-                      className="inline-flex h-9 items-center justify-center gap-2 border border-[#7c3aed] px-3 text-xs font-medium text-[#5b21b6] transition hover:bg-[#f7f3ff]"
-                    >
-                      <Copy size={14} />
-                      {isProposalCopied ? "コピー済み" : "コピー"}
-                    </button>
-                  </div>
-                  <p className="mt-4 text-sm leading-7 text-black/66">
-                    {salesSummary.salesTalk}
-                  </p>
                 </article>
               </div>
 
@@ -2102,21 +3159,12 @@ export default function EstimateSimulator() {
                         ? "保存済み"
                         : "シミュレーションを保存する"}
                   </button>
-                  <button
-                    type="button"
-                    onClick={copySalesProposal}
-                    className="inline-flex h-10 items-center justify-center gap-2 border border-[#7c3aed] px-4 text-sm font-medium text-[#5b21b6] transition hover:bg-[#f7f3ff]"
-                  >
-                    <Copy size={16} />
-                    {isProposalCopied ? "コピー済み" : "商談用提案文をコピーする"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                  <Link
+                    href="/simulation/commo"
                     className="inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
                   >
                     入力内容を修正する
-                  </button>
+                  </Link>
                 </div>
               </div>
             </section>
@@ -2127,8 +3175,8 @@ export default function EstimateSimulator() {
                 onClick={() => setIsDetailSimulationOpen((open) => !open)}
                 className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-black/72 transition hover:text-[#5b21b6]"
                 aria-expanded={isDetailSimulationOpen}
-              >
-                4. 詳細シミュレーションを見る
+	              >
+	                7. 月別12ヶ月推移・8. 料金プラン比較を見る
                 <ChevronDown
                   size={16}
                   className={[
@@ -2139,6 +3187,14 @@ export default function EstimateSimulator() {
               </button>
               {isDetailSimulationOpen ? (
                 <>
+                  <PricingPlanComparison
+                    selectedPlan={selectedPricingPlan}
+                    summaries={pricingPlanSummaries}
+                    onPlanChange={(value) => {
+                      setSelectedPricingPlan(value);
+                      setIsSaved(false);
+                    }}
+                  />
                   <div className="border-t border-black/8 px-4 py-4">
                     <div className="overflow-x-auto">
                       <SpreadsheetBlock block={sheetBlock} rows={mainSheetRows} />
@@ -2170,14 +3226,14 @@ export default function EstimateSimulator() {
                   </section>
                   <div className="border-t border-black/8 bg-white px-5 py-3">
                     <p className="text-xs leading-6 text-black/45">
-                      {getLineRegistrationBasis(activeIndustry, inputs, scenario)}
+                      {getLineRegistrationBasis(activeIndustry, inputs)}
                       LINE登録者のうち、月間で一定割合が配信やリッチメニュー経由で予約につながる想定です。
                     </p>
                   </div>
                   <CalculationBasisBox
                     industry={activeIndustry}
                     inputs={inputs}
-                    scenario={scenario}
+                    assumptions={activeAssumptions}
                   />
                 </>
               ) : null}
@@ -2185,13 +3241,27 @@ export default function EstimateSimulator() {
           </section>
 
             </>
-          ) : (
+          ) : mode === "input" ? (
             <section className="border border-black/8 bg-white px-6 py-10 text-center">
               <p className="text-sm leading-7 text-black/55">
                 {industry
-                  ? "ヒアリング項目を入力して、シミュレーション実行ボタンを押すと結果が表示されます。"
+                  ? "ヒアリング項目を入力して、シミュレーション実行ボタンを押すと結果ページへ移動します。"
                   : "業種を開くと、ヒアリング項目が表示されます。"}
               </p>
+            </section>
+          ) : (
+            <section className="border border-black/8 bg-white px-6 py-10 text-center">
+              <p className="text-sm leading-7 text-black/55">
+                {error || "シミュレーション結果が見つかりませんでした。"}
+                <br />
+                入力ページからもう一度実行してください。
+              </p>
+              <Link
+                href="/simulation/commo"
+                className="mt-5 inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
+              >
+                入力ページへ戻る
+              </Link>
             </section>
           )}
         </div>
@@ -2248,7 +3318,7 @@ function HearingInput({
 }: {
   field: FieldConfig;
   value: unknown;
-  onInputChange: (key: string, value: string, isText?: boolean) => void;
+  onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
   className?: string;
 }) {
   return (
@@ -2295,7 +3365,7 @@ function IssueSelector({
 }: {
   industry: Industry;
   inputs: SimulationInputs;
-  onInputChange: (key: string, value: string, isText?: boolean) => void;
+  onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
   onIssueToggle: (issue: string) => void;
 }) {
   const selectedIssues = Array.isArray(inputs.currentIssue)
@@ -2343,22 +3413,319 @@ function IssueSelector({
   );
 }
 
+function ToggleOptionGroup({
+  title,
+  description,
+  options,
+  values,
+  onChange,
+}: {
+  title: string;
+  description?: string;
+  options: string[];
+  values: string[];
+  onChange: (values: string[]) => void;
+}) {
+  const toggleValue = (value: string) => {
+    if (value.includes("なし")) {
+      onChange([value]);
+      return;
+    }
+
+    const withoutNone = values.filter((item) => !item.includes("なし"));
+    onChange(
+      withoutNone.includes(value)
+        ? withoutNone.filter((item) => item !== value)
+        : [...withoutNone, value],
+    );
+  };
+
+  return (
+    <div className="bg-white p-5 lg:col-span-3">
+      <p className="text-[11px] tracking-[0.16em] text-black/42">{title}</p>
+      {description ? (
+        <p className="mt-2 text-xs leading-6 text-black/50">{description}</p>
+      ) : null}
+      <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+        {options.map((option) => {
+          const isChecked = values.includes(option);
+
+          return (
+            <label
+              key={option}
+              className={[
+                "flex min-h-11 items-center gap-3 border px-3 py-2 text-sm leading-6 transition",
+                isChecked
+                  ? "border-[#7c3aed] bg-[#7c3aed]/5"
+                  : "border-black/10 hover:border-black/25",
+              ].join(" ")}
+            >
+              <input
+                type="checkbox"
+                checked={isChecked}
+                onChange={() => toggleValue(option)}
+                className="h-4 w-4 accent-[#7c3aed]"
+              />
+              <span>{option}</span>
+            </label>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ProposalInputSections({
+  industry,
+  inputs,
+  onInputChange,
+}: {
+  industry: Industry;
+  inputs: SimulationInputs;
+  onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
+}) {
+  const targetCustomers = getSelectedStrings(inputs, "targetCustomers");
+  const lineChannels = getSelectedStrings(inputs, "lineChannels");
+  const additionalServices = getSelectedStrings(inputs, "additionalServices");
+  const recommendedCase = getRecommendedLineGrowthCase(inputs);
+  const selectedCase = String(inputs.lineGrowthCase || "standard") as LineGrowthCaseKey;
+  const hasAdditionalService =
+    additionalServices.length > 0 && !additionalServices.includes("追加サービスなし");
+
+  return (
+    <>
+      <ToggleOptionGroup
+        title="今後、特に増やしたい利用者"
+        description="複数選択できます。結果ページでは、顧客分類とおすすめ施策の根拠に使います。"
+        options={targetCustomerOptionsByIndustry[industry]}
+        values={targetCustomers}
+        onChange={(values) => {
+          onInputChange("targetCustomers", values);
+          if (!values.includes(String(inputs.priorityTargetCustomer || ""))) {
+            onInputChange("priorityTargetCustomer", values[0] || "", true);
+          }
+        }}
+      />
+      <label className="bg-white p-5 lg:col-span-3">
+        <span className="text-[11px] tracking-[0.16em] text-black/42">
+          最優先で増やしたい顧客
+        </span>
+        <select
+          value={String(inputs.priorityTargetCustomer || "")}
+          onChange={(event) =>
+            onInputChange("priorityTargetCustomer", event.target.value, true)
+          }
+          className="mt-3 h-11 w-full border border-black/10 bg-white px-3 text-sm outline-none transition focus:border-[#7c3aed]"
+        >
+          <option value="">選択してください</option>
+          {targetCustomers.map((target) => (
+            <option key={target} value={target}>
+              {target}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="bg-white p-5 lg:col-span-3">
+        <span className="text-[11px] tracking-[0.16em] text-black/42">
+          今後、最も改善したい項目
+        </span>
+        <select
+          value={String(inputs.improvementFocus || "")}
+          onChange={(event) =>
+            onInputChange("improvementFocus", event.target.value, true)
+          }
+          className="mt-3 h-11 w-full border border-black/10 bg-white px-3 text-sm outline-none transition focus:border-[#7c3aed]"
+        >
+          <option value="">選択してください</option>
+          {improvementFocusOptionsByIndustry[industry].map((focus) => (
+            <option key={focus} value={focus}>
+              {focus}
+            </option>
+          ))}
+        </select>
+        {String(inputs.improvementFocus || "") === "その他" ? (
+          <textarea
+            value={String(inputs.improvementFocusOther || "")}
+            onChange={(event) =>
+              onInputChange("improvementFocusOther", event.target.value, true)
+            }
+            placeholder="改善したい項目を入力してください"
+            rows={3}
+            className="mt-3 w-full resize-none border border-black/10 px-3 py-3 text-sm leading-7 outline-none transition focus:border-[#7c3aed]"
+          />
+        ) : null}
+      </label>
+      <ToggleOptionGroup
+        title="実施予定のLINE登録導線"
+        description={`推奨ケース：${lineGrowthCases[recommendedCase].label}。選択した導線に応じて、友だち追加シナリオの目安を表示します。`}
+        options={lineChannelOptions}
+        values={lineChannels}
+        onChange={(values) => {
+          onInputChange("lineChannels", values);
+          const nextInputs = { ...inputs, lineChannels: values };
+          onInputChange("lineGrowthCase", getRecommendedLineGrowthCase(nextInputs), true);
+        }}
+      />
+      <div className="bg-white p-5 lg:col-span-3">
+        <p className="text-[11px] tracking-[0.16em] text-black/42">
+          友だち追加シナリオ
+        </p>
+        <div className="mt-4 grid gap-2 md:grid-cols-3">
+          {(Object.entries(lineGrowthCases) as [LineGrowthCaseKey, typeof lineGrowthCases[LineGrowthCaseKey]][]).map(
+            ([key, lineCase]) => (
+              <label
+                key={key}
+                className={[
+                  "min-h-11 border px-3 py-3 text-sm leading-6 transition",
+                  selectedCase === key
+                    ? "border-[#7c3aed] bg-[#7c3aed]/5"
+                    : "border-black/10 hover:border-black/25",
+                ].join(" ")}
+              >
+                <span className="flex items-center gap-3">
+                  <input
+                    type="radio"
+                    checked={selectedCase === key}
+                    onChange={() => onInputChange("lineGrowthCase", key, true)}
+                    className="h-4 w-4 accent-[#7c3aed]"
+                  />
+                  <span className="font-medium">{lineCase.label}</span>
+                </span>
+                <span className="mt-2 block text-xs text-black/50">
+                  月間利用者数の{lineCase.rate.toFixed(1)}%
+                </span>
+              </label>
+            ),
+          )}
+        </div>
+      </div>
+      <div className="bg-white p-5 lg:col-span-3">
+        <p className="text-[11px] tracking-[0.16em] text-black/42">
+          LINE施策の試算前提
+        </p>
+        <p className="mt-2 text-xs leading-6 text-black/50">
+          公開事例を参考にした初期値です。実際の提案では施設の運用状況に合わせて調整してください。
+        </p>
+        <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-4">
+          <HearingInput
+            field={{
+              key: "lineBlockRate",
+              label: "LINEブロック率想定",
+              suffix: "%",
+              placeholder: `${lineBenchmarkDefaults.blockRate}`,
+              subLabel: "追加友だちから配信が届かなくなる割合",
+            }}
+            value={inputs.lineBlockRate}
+            onInputChange={onInputChange}
+          />
+          <HearingInput
+            field={{
+              key: "friendRepeatConversionRate",
+              label: "友だち→年間追加再来訪",
+              suffix: "%",
+              placeholder: `${lineBenchmarkDefaults.friendRepeatConversionRate}`,
+              subLabel: "宿泊業は来訪周期が長いため保守的に置く",
+            }}
+            value={inputs.friendRepeatConversionRate}
+            onInputChange={onInputChange}
+          />
+          <HearingInput
+            field={{
+              key: "directBookingShiftRate",
+              label: "再来訪時の自社予約シフト率",
+              suffix: "%",
+              placeholder: `${lineBenchmarkDefaults.directBookingShiftRate}`,
+              subLabel: "再来訪のうち自社予約へ移る仮説値",
+            }}
+            value={inputs.directBookingShiftRate}
+            onInputChange={onInputChange}
+          />
+          <HearingInput
+            field={{
+              key: "averageStayNights",
+              label: industry === "hotel" ? "再来訪1回あたり平均泊数" : "再来訪1回あたり利用回数",
+              suffix: industry === "hotel" ? "泊" : "回",
+              placeholder: `${industry === "hotel" ? lineBenchmarkDefaults.averageStayNights : 1}`,
+              subLabel: "手数料軽減額への換算に使用",
+            }}
+            value={inputs.averageStayNights}
+            onInputChange={onInputChange}
+          />
+          <HearingInput
+            field={{
+              key: "monthlyBroadcastCount",
+              label: "月間配信回数",
+              suffix: "回",
+              placeholder: `${lineBenchmarkDefaults.monthlyBroadcastCount}`,
+              subLabel: "全員配信・セグメント配信の通数試算に使用",
+            }}
+            value={inputs.monthlyBroadcastCount}
+            onInputChange={onInputChange}
+          />
+          <HearingInput
+            field={{
+              key: "segmentDeliveryRate",
+              label: "平均セグメント配信率",
+              suffix: "%",
+              placeholder: `${lineBenchmarkDefaults.segmentDeliveryRate}`,
+              subLabel: "1回の配信で実際に送る友だちの割合",
+            }}
+            value={inputs.segmentDeliveryRate}
+            onInputChange={onInputChange}
+          />
+        </div>
+        <div className="mt-4 grid gap-3 lg:grid-cols-3">
+          {lineBenchmarkEvidence.map((item) => (
+            <div key={item.label} className="border border-black/8 bg-[#fbfbfc] p-4">
+              <p className="text-sm font-medium text-black/76">{item.label}</p>
+              <p className="mt-2 text-xs leading-6 text-black/55">{item.body}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+      <ToggleOptionGroup
+        title="LINEを活用して案内したい追加サービス"
+        options={additionalServiceOptionsByIndustry[industry]}
+        values={additionalServices}
+        onChange={(values) => onInputChange("additionalServices", values)}
+      />
+      {hasAdditionalService ? (
+        <>
+          <HearingInput
+            field={{
+              key: "additionalServiceUsageRate",
+              label: "想定利用率",
+              suffix: "%",
+              placeholder: "例：8",
+            }}
+            value={inputs.additionalServiceUsageRate}
+            onInputChange={onInputChange}
+          />
+          <HearingInput
+            field={{
+              key: "additionalServiceUnitPrice",
+              label: "追加サービス平均単価",
+              suffix: "円",
+              placeholder: "例：1,500",
+            }}
+            value={inputs.additionalServiceUnitPrice}
+            onInputChange={onInputChange}
+          />
+        </>
+      ) : null}
+    </>
+  );
+}
+
 function SubmitBlock({
   isAnalyzing,
-  formError,
   onSubmit,
 }: {
   isAnalyzing: boolean;
-  formError?: string;
   onSubmit: () => void;
 }) {
   return (
     <div className="bg-white p-5 lg:col-span-3">
-      {formError ? (
-        <p className="mb-3 bg-[#fffbeb] px-3 py-2 text-xs leading-6 text-[#92400e]">
-          {formError}
-        </p>
-      ) : null}
       <button
         type="button"
         onClick={onSubmit}
@@ -2387,7 +3754,7 @@ function GenericHearingForm({
   industry: Industry;
   inputs: SimulationInputs;
   isAnalyzing: boolean;
-  onInputChange: (key: string, value: string, isText?: boolean) => void;
+  onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
   onIssueToggle: (issue: string) => void;
   onSubmit: () => void;
 }) {
@@ -2429,6 +3796,11 @@ function GenericHearingForm({
           />
         );
       })}
+      <ProposalInputSections
+        industry={industry}
+        inputs={inputs}
+        onInputChange={onInputChange}
+      />
       <SubmitBlock isAnalyzing={isAnalyzing} onSubmit={onSubmit} />
     </div>
   );
@@ -2436,9 +3808,7 @@ function GenericHearingForm({
 
 function HotelHearingForm({
   inputs,
-  formError,
   isAnalyzing,
-  routeRatioTotal,
   roomNightCheck,
   onInputChange,
   onIssueToggle,
@@ -2446,11 +3816,9 @@ function HotelHearingForm({
   onSubmit,
 }: {
   inputs: SimulationInputs;
-  formError: string;
   isAnalyzing: boolean;
-  routeRatioTotal: number;
   roomNightCheck: { roomNights: number; stayType: string } | null;
-  onInputChange: (key: string, value: string, isText?: boolean) => void;
+  onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
   onIssueToggle: (issue: string) => void;
   onLineAccountChange: (value: string) => void;
   onSubmit: () => void;
@@ -2508,10 +3876,6 @@ function HotelHearingForm({
             );
           })}
 
-          {section.title === "現在の予約経路" ? (
-            <RouteRatioStatus routeRatioTotal={routeRatioTotal} />
-          ) : null}
-
           {section.title === "顧客・LINE活用状況" ? (
             <>
               <LineAccountSelector
@@ -2554,37 +3918,15 @@ function HotelHearingForm({
         onInputChange={onInputChange}
         onIssueToggle={onIssueToggle}
       />
+      <ProposalInputSections
+        industry="hotel"
+        inputs={inputs}
+        onInputChange={onInputChange}
+      />
       <SubmitBlock
         isAnalyzing={isAnalyzing}
-        formError={formError}
         onSubmit={onSubmit}
       />
-    </div>
-  );
-}
-
-function RouteRatioStatus({ routeRatioTotal }: { routeRatioTotal: number }) {
-  if (routeRatioTotal === 0) {
-    return null;
-  }
-
-  const isComplete = routeRatioTotal === 100;
-
-  return (
-    <div
-      className={[
-        "p-5 text-sm leading-7 lg:col-span-3",
-        isComplete ? "bg-white text-black/62" : "bg-[#fffbeb] text-[#92400e]",
-      ].join(" ")}
-    >
-      <p>現在の合計：{formatNumber(routeRatioTotal)}%</p>
-      <p>
-        {isComplete
-          ? "予約経路の合計は100%です"
-          : `予約経路の合計が${formatNumber(
-              routeRatioTotal,
-            )}%です。100%になるように調整してください。`}
-      </p>
     </div>
   );
 }
@@ -2738,15 +4080,22 @@ function SpreadsheetBlock({
 function CalculationBasisBox({
   industry,
   inputs,
-  scenario,
+  assumptions,
 }: {
   industry: Industry;
   inputs: SimulationInputs;
-  scenario: Record<ScenarioKey, number>;
+  assumptions: SimulationAssumptions;
 }) {
   const monthlyCustomers = getMonthlyCustomers(industry, inputs);
-  const lineRegistrationRate = scenario.line;
-  const lineReservationRate = deliveryReservationRateByIndustry[industry] * 100;
+  const lineCase = getLineGrowthCase(inputs);
+  const funnel = lineFunnelByIndustry[industry];
+  const lineReservationRate =
+    funnel.activeFriendRate *
+    funnel.monthlyDeliveryTargetRate *
+    funnel.linkReactionRate *
+    funnel.reservationPageVisitRate *
+    funnel.bookingConversionRate *
+    100;
   const customerLabel =
     industry === "hotel"
       ? "月間利用者数"
@@ -2760,6 +4109,12 @@ function CalculationBasisBox({
         ? "平均プレー料金"
         : "平均客単価";
   const labels = industryMessageLabels[industry];
+  const blockRate = getLineBlockRate(inputs);
+  const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs);
+  const directBookingShiftRate = getDirectBookingShiftRate(inputs);
+  const averageStayNights = getAverageStayNightsForSimulation(inputs);
+  const monthlyBroadcastCount = getMonthlyBroadcastCount(inputs);
+  const segmentDeliveryRate = getSegmentDeliveryRate(inputs);
 
   return (
     <section className="border-t border-black/8 bg-[#f7f8fa] px-5 py-5">
@@ -2774,29 +4129,51 @@ function CalculationBasisBox({
           <p>
             月間LINE友だち追加数は、{customerLabel}{formatNumber(
               monthlyCustomers,
-            )}人の約{lineRegistrationRate.toFixed(
+            )}人の約{lineCase.rate.toFixed(
               1,
-            )}%が{labels.lineRegistrationTouchpoints}などを通じてLINE登録すると仮定しています。LINE経由予約は、累計LINE友だち数のうち月間{lineReservationRate.toFixed(
+            )}%が{labels.lineRegistrationTouchpoints}などを通じてLINE登録し、ブロック率{formatPercent(
+              blockRate,
+            )}を控除したネット友だち数で試算しています。LINE経由予約は、累計友だち数のうち有効友だち、月間配信対象、リンク反応、予約ページ訪問、予約完了のファネルを通過する人数として試算しています。ファネル全体の仮定予約率は月間{lineReservationRate.toFixed(
               1,
-            )}%が予約につながる想定です。
+            )}%です。
           </p>
           <p>
-            月間収益改善見込みは、LINE経由予約売上、リピーター率改善による売上増、平均予約単価改善による売上増、公式予約転換による{labels.externalSiteLabel}手数料削減をもとに算出し、効果が重複しすぎないよう調整しています。
+            月間改善効果は、再来店による追加予約売上・空室や空き枠への送客売上・追加サービス売上を含む「売上改善」と、自社予約への移行による手数料軽減・問い合わせ対応時間の削減を含む「コスト改善」に分けて算出しています。同じ予約売上を複数項目で重複計上しない前提です。
           </p>
           <p>
-            {labels.externalSiteLabel}手数料削減見込みは、LINE経由予約分だけではなく、{labels.externalSiteLabel}経由だった予約の一部が{labels.directDestination}へ転換した場合に、本来発生していた{labels.externalSiteLabel}手数料が削減されるものとして試算しています。
+            LINE公式アカウントの配信費用は、全員配信の場合「ネット友だち数 × 月間配信回数{formatDecimalNumber(
+              monthlyBroadcastCount,
+              1,
+            )}回」、セグメント配信の場合「ネット友だち数 × 月間配信回数 × 平均セグメント配信率{formatPercent(
+              segmentDeliveryRate,
+            )}」で通数を出し、無料通数の範囲に応じて必要プランを判定しています。
           </p>
           <p>
-            月間収支は、月間収益改善見込みから月額運用費{formatManYenLabel(
-              monthlyLineOperationCost,
+            {labels.externalSiteLabel}手数料軽減見込みは、ネット友だち数 × 友だちからの年間追加再来訪率{formatPercent(
+              friendRepeatConversionRate,
+            )} × 自社予約シフト率{formatPercent(
+              directBookingShiftRate,
+            )} × 平均利用数{formatDecimalNumber(
+              averageStayNights,
+              1,
+            )} × {unitPriceLabel} × 手数料率をベースに、{assumptions.feeReductionStartMonth}ヶ月目に{formatPercent(
+              assumptions.feeReductionRate,
+            )}の自社予約移行を目指す想定で段階的に計算しています。OTAそのものをなくす試算ではありません。
+          </p>
+          <p>
+            友だち追加導線やブロック率は公開事例・業界一般値を参考にした説明用の初期値です。一方、友だちからの再来訪率、自社予約シフト率、平均泊数・利用回数は施設ごとに変わる仮説値として、商談中に調整する前提です。
+          </p>
+          <p>
+            月間収支は、月間改善効果から月額運用費{formatManYenLabel(
+              assumptions.monthlyOperationCost,
             )}を差し引いた金額です。累計収支は、初期設定費{formatManYenLabel(
               initialLineSetupCost,
             )}・月額運用費{formatManYenLabel(
-              monthlyLineOperationCost,
+              assumptions.monthlyOperationCost,
             )}を差し引いたうえで、導入から該当月までの収支を表示しています。
           </p>
           <p className="font-medium text-black/72">
-            本結果は入力値をもとにした試算であり、売上・予約数・費用対効果を保証するものではありません。
+            本シミュレーションは、入力された条件と設定値に基づく概算です。実際の成果は、LINE登録導線、スタッフによる案内、配信内容、施設の魅力、季節、地域、顧客属性などによって変動します。表示される数値は成果を保証するものではありません。
           </p>
         </div>
       </div>
@@ -2884,6 +4261,31 @@ function RecommendationCard({ recommendation }: { recommendation: Recommendation
       <p className="mt-4 max-w-3xl text-sm leading-8 text-black/66">
         {recommendation.detail}
       </p>
+      <div className="mt-5 border border-[#7c3aed]/15 bg-white/70 p-4">
+        <p className="text-xs font-medium text-[#5b21b6]">
+          判定に使った根拠
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          {recommendation.evidence.map((item) => (
+            <div key={item.label} className="border border-black/8 bg-white p-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <p className="text-[11px] tracking-[0.12em] text-black/42">
+                  {item.label}
+                </p>
+                <p className="text-base font-semibold text-black/78">
+                  {item.value}
+                </p>
+              </div>
+              <p className="mt-2 text-xs leading-6 text-black/58">
+                {item.basis}
+              </p>
+            </div>
+          ))}
+        </div>
+        <p className="mt-3 text-xs leading-6 text-black/45">
+          星評価は上記項目と入力された課題内容を点数化した目安です。効果を保証するものではなく、導入検討時に確認すべき優先度として表示しています。
+        </p>
+      </div>
     </article>
   );
 }
@@ -2900,6 +4302,690 @@ function OpportunityCard({ rating }: { rating: OpportunityRating }) {
       </p>
       <p className="mt-3 text-xs leading-6 text-black/55">{rating.detail}</p>
     </article>
+  );
+}
+
+function SalesTalkAssist({ title, children }: { title: string; children: ReactNode }) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <div className="mt-4 border border-black/8 bg-[#fbfbfc]">
+      <button
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+        className="flex w-full items-center justify-between px-4 py-3 text-left text-xs font-medium text-black/58"
+      >
+        {title}
+        <ChevronDown
+          size={14}
+          className={["transition", isOpen ? "rotate-180" : ""].join(" ")}
+        />
+      </button>
+      {isOpen ? (
+        <div className="border-t border-black/8 px-4 py-3 text-xs leading-7 text-black/58">
+          {children}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CustomerFoundationCard({
+  row,
+  segments,
+  priorityTarget,
+}: {
+  row: ProjectionRow;
+  segments: { label: string; value: number }[];
+  priorityTarget: string;
+}) {
+  return (
+    <article className="border border-black/8 bg-white p-5">
+      <p className="text-[11px] tracking-[0.18em] text-black/35">
+        3. 12ヶ月後の顧客基盤
+      </p>
+      <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-4">
+        <CurrentMetricCard label="LINE友だち数" value={`${formatNumber(row.lineFriends)}人`} />
+        <CurrentMetricCard label="アンケート回答者" value={`${formatNumber(row.surveyRespondents)}人`} />
+        <CurrentMetricCard label="分類済み顧客数" value={`${formatNumber(row.classifiedCustomers)}人`} />
+        <CurrentMetricCard
+          label="最優先顧客層"
+          value={`${formatNumber(row.priorityCustomerCount)}人`}
+          description={priorityTarget || "未選択"}
+        />
+      </div>
+      {segments.length ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {segments.map((segment) => (
+            <div key={segment.label} className="border border-black/8 bg-[#fbfbfc] p-3">
+              <p className="text-xs text-black/45">{segment.label}</p>
+              <p className="mt-1 text-lg font-semibold text-black/78">
+                {formatNumber(segment.value)}人
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <p className="mt-3 text-xs leading-6 text-black/45">
+        顧客分類ごとの人数は、入力された「増やしたい顧客層」を参考にしたシミュレーション値です。実績値ではありません。
+      </p>
+      <SalesTalkAssist title="商談トーク例：顧客分類">
+        友だち数を増やすだけではなく、どのような目的で利用したお客様なのかを把握することで、顧客層ごとに合う案内を届けられます。
+      </SalesTalkAssist>
+    </article>
+  );
+}
+
+function LineMessagingCostCard({
+  row,
+  inputs,
+  onInputChange,
+}: {
+  row: ProjectionRow;
+  inputs: SimulationInputs;
+  onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
+}) {
+  const monthlyBroadcastCount = getMonthlyBroadcastCount(inputs);
+  const segmentDeliveryRate = getSegmentDeliveryRate(inputs);
+  const allPlan = calculateLineOfficialCost(row.allBroadcastMessages);
+  const segmentedPlan = calculateLineOfficialCost(row.segmentedBroadcastMessages);
+
+  return (
+    <article className="mt-4 border border-black/8 bg-white p-5">
+      <p className="text-[11px] tracking-[0.18em] text-black/35">
+        配信方法によるLINE公式アカウント費用
+      </p>
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.4fr]">
+        <div className="grid gap-3">
+          <HearingInput
+            field={{
+              key: "monthlyBroadcastCount",
+              label: "月間配信回数",
+              suffix: "回",
+              placeholder: `${lineBenchmarkDefaults.monthlyBroadcastCount}`,
+            }}
+            value={monthlyBroadcastCount}
+            onInputChange={onInputChange}
+          />
+          <HearingInput
+            field={{
+              key: "segmentDeliveryRate",
+              label: "平均セグメント配信率",
+              suffix: "%",
+              placeholder: `${lineBenchmarkDefaults.segmentDeliveryRate}`,
+            }}
+            value={segmentDeliveryRate}
+            onInputChange={onInputChange}
+          />
+          <p className="text-xs leading-6 text-black/50">
+            配信通数は「実際に送った人数」でカウントされます。同じ友だち数でも、全員配信かセグメント配信かで必要なLINE公式アカウントプランが変わります。
+          </p>
+        </div>
+        <div className="grid gap-px bg-black/8 md:grid-cols-3">
+          <CurrentMetricCard
+            label="全員配信の場合"
+            value={formatCurrency(row.allBroadcastCost)}
+            description={`${formatNumber(row.allBroadcastMessages)}通 / ${allPlan.planLabel}プラン`}
+          />
+          <CurrentMetricCard
+            label="セグメント配信の場合"
+            value={formatCurrency(row.segmentedBroadcastCost)}
+            description={`${formatNumber(row.segmentedBroadcastMessages)}通 / ${segmentedPlan.planLabel}プラン`}
+          />
+          <CurrentMetricCard
+            label="月間費用差"
+            value={formatCurrency(row.messageCostSaving)}
+            description="セグメント配信で抑えられるLINE公式アカウント費用の概算"
+            featured
+          />
+        </div>
+      </div>
+      <SalesTalkAssist title="商談トーク例：セグメント配信">
+        友だち数が増えるほど、全員に同じ内容を送る運用では通数とブロック率の両方が課題になります。利用目的や来訪タイミングで分けて送ることで、必要な人に必要な情報だけを届けながら、LINE公式アカウントの費用上昇も抑えられます。
+      </SalesTalkAssist>
+    </article>
+  );
+}
+
+function OtaMigrationCard({
+  externalSiteLabel,
+  annualCommission,
+  migrationRate,
+  targetMonth,
+  annualSaving,
+  reinvestments,
+  onReinvestmentChange,
+}: {
+  externalSiteLabel: string;
+  annualCommission: number;
+  migrationRate: number;
+  targetMonth: number;
+  annualSaving: number;
+  reinvestments: string[];
+  onReinvestmentChange: (values: string[]) => void;
+}) {
+  return (
+    <article className="border border-black/8 bg-white p-5">
+      <p className="text-[11px] tracking-[0.18em] text-black/35">
+        4. 自社予約移行シミュレーション
+      </p>
+      <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-4">
+        <CurrentMetricCard
+          label={`現在の年間${externalSiteLabel}手数料`}
+          value={formatCurrency(annualCommission)}
+          description={`年間 ${formatApproxManYen(annualCommission)}`}
+        />
+        <CurrentMetricCard
+          label="自社予約へ移行する割合"
+          value={`${migrationRate.toFixed(1)}%`}
+        />
+        <CurrentMetricCard label="自社予約化の目標期間" value={`${targetMonth}ヶ月`} />
+        <CurrentMetricCard
+          label="軽減できる手数料"
+          value={formatCurrency(annualSaving)}
+          description={`年間 ${formatApproxManYen(annualSaving)}`}
+          featured
+        />
+      </div>
+      <div className="mt-4 bg-[#f7f3ff] px-4 py-4 text-sm leading-7 text-[#4c1d95]">
+        <p>OTAそのものをなくす試算ではありません。</p>
+        <p className="mt-1">
+          新規集客には{externalSiteLabel}を活用しながら、再来訪するお客様の一部をLINEや公式サイトからの自社予約へ移行した場合の概算です。
+        </p>
+      </div>
+      <ToggleOptionGroup
+        title="この金額を、施設の何に活用しますか？"
+        options={reinvestmentOptions}
+        values={reinvestments}
+        onChange={onReinvestmentChange}
+      />
+      <p className="mt-4 text-sm font-medium text-black/72">
+        年間{formatCurrency(annualSaving)}の利益が残るとしたら、施設のどこに再投資したいですか？
+      </p>
+      <SalesTalkAssist title="商談トーク例：自社予約移行">
+        現在のOTA利用を否定する必要はありません。新規のお客様はOTAで獲得しながら、一度利用したお客様の一部だけでも次回はLINEや自社サイトから予約してもらえれば、年間でこれだけの金額が施設に残ります。
+      </SalesTalkAssist>
+    </article>
+  );
+}
+
+function ImprovementBreakdownCards({ row }: { row: ProjectionRow }) {
+  return (
+    <div className="grid gap-px bg-black/8 lg:grid-cols-2">
+      <article className="bg-white p-5">
+        <p className="text-[11px] tracking-[0.18em] text-black/35">
+          5. 売上改善シミュレーション
+        </p>
+        <div className="mt-4 grid gap-3">
+          <CurrentMetricCard label="再来訪による追加予約売上" value={formatCurrency(row.repeatRevenue)} />
+          <CurrentMetricCard label="空室・空き枠への送客売上" value={formatCurrency(row.vacantSlotRevenue)} />
+          <CurrentMetricCard label="追加サービス売上" value={formatCurrency(row.unitPriceIncreaseRevenue)} />
+        </div>
+      </article>
+      <article className="bg-white p-5">
+        <p className="text-[11px] tracking-[0.18em] text-black/35">
+          6. コスト改善シミュレーション
+        </p>
+        <div className="mt-4 grid gap-3">
+          <CurrentMetricCard label="自社予約への移行による手数料軽減" value={formatCurrency(row.feeSaving)} />
+          <CurrentMetricCard label="電話・問い合わせ対応時間の削減" value={formatCurrency(0)} description="現時点では定量化せず、改善項目として表示しています。" />
+        </div>
+      </article>
+    </div>
+  );
+}
+
+function FeeReductionScenarioControls({
+  externalSiteLabel,
+  startMonth,
+  reductionRate,
+  onStartMonthChange,
+  onReductionRateChange,
+}: {
+  externalSiteLabel: string;
+  startMonth: number;
+  reductionRate: number;
+  onStartMonthChange: (value: number) => void;
+  onReductionRateChange: (value: number) => void;
+}) {
+  return (
+    <div className="mt-4 border border-black/8 bg-white p-5">
+      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h3 className="text-base font-medium text-black/78">
+            自社予約移行シミュレーション
+          </h3>
+          <p className="mt-2 text-sm leading-7 text-black/55">
+            何ヶ月目までに、{externalSiteLabel}予約の何%を自社予約へ移行するかを試算できます。
+          </p>
+        </div>
+        <p className="text-sm font-medium text-[#5b21b6]">
+          {startMonth}ヶ月目までに{reductionRate}%を自社予約へ移行
+        </p>
+      </div>
+      <div className="mt-4 grid gap-4 md:grid-cols-2">
+        <label className="block">
+          <span className="text-[11px] tracking-[0.14em] text-black/42">
+            自社予約化の目標期間
+          </span>
+          <select
+            value={startMonth}
+            onChange={(event) => onStartMonthChange(Number(event.target.value))}
+            className="mt-2 h-11 w-full border border-black/10 bg-white px-3 text-sm outline-none transition focus:border-[#7c3aed]"
+          >
+            {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
+              <option key={month} value={month}>
+                {month}ヶ月目
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block">
+          <span className="text-[11px] tracking-[0.14em] text-black/42">
+            自社予約へ移行する割合
+          </span>
+          <div className="mt-2 flex items-center gap-3">
+            <input
+              type="range"
+              min={1}
+              max={100}
+              value={reductionRate}
+              onChange={(event) =>
+                onReductionRateChange(Number(event.target.value))
+              }
+              className="h-11 flex-1 accent-[#7c3aed]"
+            />
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={reductionRate}
+              onChange={(event) => {
+                const parsedValue = Number(event.target.value);
+                const nextValue = Math.min(
+                  Math.max(Number.isFinite(parsedValue) ? parsedValue : 1, 1),
+                  100,
+                );
+                onReductionRateChange(nextValue);
+              }}
+              className="h-11 w-24 border border-black/10 px-3 text-right text-sm outline-none transition focus:border-[#7c3aed]"
+            />
+            <span className="text-sm text-black/55">%</span>
+          </div>
+        </label>
+      </div>
+    </div>
+  );
+}
+
+function PricingPlanComparison({
+  selectedPlan,
+  summaries,
+  onPlanChange,
+}: {
+  selectedPlan: PricingPlanKey;
+  summaries: PricingPlanSummary[];
+  onPlanChange: (value: PricingPlanKey) => void;
+}) {
+  return (
+    <div className="border-t border-black/8 bg-white px-5 py-5">
+      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h3 className="text-base font-medium text-black/78">
+            8. 料金プラン比較
+          </h3>
+          <p className="mt-2 text-sm leading-7 text-black/55">
+            月額3万円と5万円のどちらで見るかを選べます。下の詳細表は選択中プランで再計算されます。
+          </p>
+        </div>
+        <p className="text-xs leading-6 text-black/45">
+          初期設定費15万円は両プラン共通です。
+        </p>
+      </div>
+      <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2">
+        {summaries.map((summary) => {
+          const isSelected = selectedPlan === summary.key;
+
+          return (
+            <button
+              key={summary.key}
+              type="button"
+              onClick={() => onPlanChange(summary.key)}
+              className={[
+                "bg-white p-5 text-left transition",
+                isSelected
+                  ? "outline outline-2 outline-[#7c3aed] -outline-offset-2"
+                  : "hover:bg-[#fbfbfc]",
+              ].join(" ")}
+            >
+              <span className="flex items-start justify-between gap-4">
+                <span>
+                  <span className="block text-sm font-medium text-black/78">
+                    {summary.label}
+                  </span>
+                  <span className="mt-2 block text-xs leading-6 text-black/50">
+                    {summary.description}
+                  </span>
+                </span>
+                <span
+                  className={[
+                    "shrink-0 border px-2 py-1 text-xs font-medium",
+                    isSelected
+                      ? "border-[#7c3aed] bg-[#f7f3ff] text-[#5b21b6]"
+                      : "border-black/10 text-black/45",
+                  ].join(" ")}
+                >
+                  {isSelected ? "選択中" : "切替"}
+                </span>
+              </span>
+              <span className="mt-5 grid gap-3 sm:grid-cols-3">
+                <span>
+                  <span className="block text-[11px] tracking-[0.12em] text-black/35">
+                    月額費
+                  </span>
+                  <span className="mt-1 block text-lg font-semibold text-black/78">
+                    {formatManYenLabel(summary.monthlyOperationCost)}
+                  </span>
+                </span>
+                <span>
+                  <span className="block text-[11px] tracking-[0.12em] text-black/35">
+                    12ヶ月費用
+                  </span>
+                  <span className="mt-1 block text-lg font-semibold text-black/78">
+                    {formatManYenLabel(summary.annualCost)}
+                  </span>
+                </span>
+                <span>
+                  <span className="block text-[11px] tracking-[0.12em] text-black/35">
+                    12ヶ月累計収支
+                  </span>
+                  <span
+                    className={[
+                      "mt-1 block text-lg font-semibold",
+                      summary.cumulativeProfit >= 0
+                        ? "text-[#12657d]"
+                        : "text-[#9a3412]",
+                    ].join(" ")}
+                  >
+                    {formatSignedApproxManYen(summary.cumulativeProfit)}
+                  </span>
+                </span>
+              </span>
+              <span className="mt-4 block text-xs leading-6 text-black/52">
+                {summary.breakEvenMonth
+                  ? `${summary.breakEvenMonth}ヶ月目に累計収支がプラスになる想定です。`
+                  : "12ヶ月以内には累計収支がプラスにならない想定です。"}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MiniLineChart({
+  title,
+  unit,
+  points,
+  projectedKey,
+  benchmarkKey,
+}: {
+  title: string;
+  unit: string;
+  points: BenchmarkPoint[];
+  projectedKey: "projectedLineFriends" | "projectedDirectRatio";
+  benchmarkKey: "benchmarkLineFriends" | "benchmarkDirectRatio";
+}) {
+  const width = 760;
+  const height = 260;
+  const padding = { top: 26, right: 142, bottom: 38, left: 48 };
+  const values = points.flatMap((point) => [
+    point[projectedKey],
+    point[benchmarkKey],
+  ]);
+  const maxValue = Math.max(...values, 1);
+  const roundedMax =
+    unit === "%"
+      ? Math.min(100, Math.ceil(maxValue / 10) * 10)
+      : Math.ceil(maxValue / 100) * 100;
+  const x = (month: number) =>
+    padding.left +
+    (month / 12) * (width - padding.left - padding.right);
+  const y = (value: number) =>
+    height -
+    padding.bottom -
+    (value / roundedMax) * (height - padding.top - padding.bottom);
+  const toPath = (key: typeof projectedKey | typeof benchmarkKey) =>
+    points
+      .map((point, index) => {
+        const command = index === 0 ? "M" : "L";
+        return `${command} ${x(point.month).toFixed(1)} ${y(point[key]).toFixed(1)}`;
+      })
+      .join(" ");
+  const lastPoint = points[points.length - 1];
+  const projectedEndY = y(lastPoint[projectedKey]);
+  const benchmarkEndY = y(lastPoint[benchmarkKey]);
+  const areEndLabelsClose = Math.abs(projectedEndY - benchmarkEndY) < 24;
+  const projectedLabelY = areEndLabelsClose
+    ? Math.max(projectedEndY - 12, padding.top + 12)
+    : projectedEndY;
+  const benchmarkLabelY = areEndLabelsClose
+    ? Math.min(benchmarkEndY + 12, height - padding.bottom - 12)
+    : benchmarkEndY;
+  const projectedEndValue = lastPoint[projectedKey];
+  const benchmarkEndValue = lastPoint[benchmarkKey];
+  const difference = benchmarkEndValue - projectedEndValue;
+
+  return (
+    <article className="border border-black/8 bg-white p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h4 className="text-sm font-medium text-black/78">{title}</h4>
+          <p className="mt-1 text-xs text-black/45">0ヶ月目から12ヶ月後までの推移</p>
+        </div>
+        <div className="flex flex-wrap gap-3 text-xs text-black/55">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-0.5 w-5 bg-[#7c3aed]" />
+            この施設の試算
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="h-0.5 w-5 border-t border-dashed border-[#16a34a]" />
+            同規模参考推移
+          </span>
+        </div>
+      </div>
+      <div className="mt-4 overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={`${title}の12ヶ月推移比較`}
+          className="h-auto min-w-[560px] text-black/40"
+        >
+          {[0, 0.5, 1].map((ratio) => {
+            const gridY =
+              padding.top +
+              ratio * (height - padding.top - padding.bottom);
+            const labelValue = roundedMax * (1 - ratio);
+
+            return (
+              <g key={ratio}>
+                <line
+                  x1={padding.left}
+                  y1={gridY}
+                  x2={width - padding.right}
+                  y2={gridY}
+                  stroke="currentColor"
+                  strokeOpacity="0.18"
+                />
+                <text
+                  x={padding.left - 10}
+                  y={gridY + 4}
+                  textAnchor="end"
+                  className="fill-black/38 text-[11px]"
+                >
+                  {formatNumber(labelValue)}
+                  {unit}
+                </text>
+              </g>
+            );
+          })}
+          {[0, 6, 12].map((month) => (
+            <text
+              key={month}
+              x={x(month)}
+              y={height - 9}
+              textAnchor="middle"
+              className="fill-black/38 text-[11px]"
+            >
+              {month}ヶ月
+            </text>
+          ))}
+          <path
+            d={toPath(projectedKey)}
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth="7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeOpacity="0.85"
+          />
+          <path
+            d={toPath(benchmarkKey)}
+            fill="none"
+            stroke="#16a34a"
+            strokeWidth="3"
+            strokeDasharray="8 7"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path
+            d={toPath(projectedKey)}
+            fill="none"
+            stroke="#7c3aed"
+            strokeWidth="4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          {points.map((point) => (
+            <g key={point.month}>
+              <rect
+                x={x(point.month) - 3}
+                y={y(point[benchmarkKey]) - 3}
+                width="6"
+                height="6"
+                fill="#16a34a"
+                opacity="0.95"
+              />
+              <circle
+                cx={x(point.month)}
+                cy={y(point[projectedKey])}
+                r="4"
+                fill="#7c3aed"
+                stroke="#ffffff"
+                strokeWidth="2"
+              />
+            </g>
+          ))}
+          <line
+            x1={x(12)}
+            y1={projectedEndY}
+            x2={width - padding.right + 16}
+            y2={projectedLabelY}
+            stroke="#7c3aed"
+            strokeOpacity="0.4"
+          />
+          <line
+            x1={x(12)}
+            y1={benchmarkEndY}
+            x2={width - padding.right + 16}
+            y2={benchmarkLabelY}
+            stroke="#16a34a"
+            strokeOpacity="0.4"
+            strokeDasharray="4 4"
+          />
+          <g transform={`translate(${width - padding.right + 18}, ${projectedLabelY - 12})`}>
+            <rect width="112" height="24" rx="2" fill="#f5f3ff" />
+            <text x="8" y="16" className="fill-[#5b21b6] text-[11px] font-medium">
+              この施設 {formatNumber(projectedEndValue)}
+              {unit}
+            </text>
+          </g>
+          <g transform={`translate(${width - padding.right + 18}, ${benchmarkLabelY - 12})`}>
+            <rect width="112" height="24" rx="2" fill="#ecfdf5" />
+            <text x="8" y="16" className="fill-[#166534] text-[11px] font-medium">
+              参考 {formatNumber(benchmarkEndValue)}
+              {unit}
+            </text>
+          </g>
+        </svg>
+      </div>
+      <div className="mt-3 grid gap-2 text-xs leading-6 text-black/58 sm:grid-cols-3">
+        <p>
+          この施設の試算：12ヶ月後 {formatNumber(lastPoint[projectedKey])}
+          {unit}
+        </p>
+        <p>
+          同規模参考推移：12ヶ月後 {formatNumber(lastPoint[benchmarkKey])}
+          {unit}
+        </p>
+        <p className={difference >= 0 ? "text-[#166534]" : "text-[#5b21b6]"}>
+          差分：{difference >= 0 ? "+" : ""}
+          {formatNumber(difference)}
+          {unit}
+        </p>
+      </div>
+    </article>
+  );
+}
+
+function BenchmarkComparisonCard({
+  comparison,
+  directRateLabel,
+}: {
+  comparison: BenchmarkComparison;
+  directRateLabel: string;
+}) {
+  return (
+    <div className="mt-4 border border-black/8 bg-[#fbfbfc] p-5">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <h3 className="text-base font-medium text-black/78">
+            同規模施設の参考推移
+          </h3>
+          <p className="mt-2 text-sm leading-7 text-black/58">
+            {comparison.profile}
+          </p>
+        </div>
+        <p className="max-w-md text-xs leading-6 text-black/45">
+          実在施設の実績値ではありません。入力条件とシミュレーション設定から作成した、商談用の仮想比較です。
+        </p>
+      </div>
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <MiniLineChart
+          title="LINE友だち数"
+          unit="人"
+          points={comparison.points}
+          projectedKey="projectedLineFriends"
+          benchmarkKey="benchmarkLineFriends"
+        />
+        <MiniLineChart
+          title={directRateLabel}
+          unit="%"
+          points={comparison.points}
+          projectedKey="projectedDirectRatio"
+          benchmarkKey="benchmarkDirectRatio"
+        />
+      </div>
+      <ul className="mt-4 grid gap-2 text-xs leading-6 text-black/52 md:grid-cols-3">
+        {comparison.basis.map((item) => (
+          <li key={item} className="flex gap-2">
+            <span className="mt-2 h-1.5 w-1.5 shrink-0 bg-[#7c3aed]" />
+            <span>{item}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
