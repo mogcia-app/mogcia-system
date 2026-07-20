@@ -223,18 +223,6 @@ type SalesSummary = {
   supportItems: string[];
 };
 
-type Recommendation = {
-  score: number;
-  title: string;
-  lead: string;
-  detail: string;
-  evidence: {
-    label: string;
-    value: string;
-    basis: string;
-  }[];
-};
-
 type FieldSection = {
   title: string;
   description?: string;
@@ -664,16 +652,10 @@ const hotelFieldSections: FieldSection[] = [
     fields: ["thirdPartyRatio", "directRatio", "phoneRatio"],
   },
   {
-    title: "顧客・LINE活用状況",
-    fields: ["repeatRatio", "currentLineFriends"],
+    title: "顧客",
+    fields: ["repeatRatio"],
   },
 ];
-
-const lineAccountOptions = [
-  { value: "active", label: "運用している" },
-  { value: "inactive", label: "開設しているが活用できていない" },
-  { value: "none", label: "まだ開設していない" },
-] as const;
 
 const facilityPlaceholders: Record<Industry, string> = {
   hotel: "例：〇〇ホテル",
@@ -1305,32 +1287,6 @@ function getMonthlySalesForCommission(industry: Industry, inputs: SimulationInpu
   return getCurrentRevenue(industry, inputs);
 }
 
-function getRoomNightCheck(inputs: SimulationInputs) {
-  const roomNights =
-    toNumber(inputs.roomCount) * 30 * (toNumber(inputs.occupancyRate) / 100);
-  const monthlyCustomers = toNumber(inputs.monthlyCustomers);
-
-  if (roomNights <= 0 || monthlyCustomers <= 0) {
-    return null;
-  }
-
-  const guestsPerRoomNight = monthlyCustomers / roomNights;
-
-  if (guestsPerRoomNight >= 0.5 && guestsPerRoomNight <= 3.5) {
-    return null;
-  }
-
-  const stayType =
-    guestsPerRoomNight < 0.5
-      ? "長期滞在が多い施設"
-      : "1室あたりの利用人数が多い施設";
-
-  return {
-    roomNights,
-    stayType,
-  };
-}
-
 function getCommissionRate(industry: Industry, inputs: SimulationInputs) {
   const enteredCommissionRate = toNumber(inputs.commissionRate);
 
@@ -1468,162 +1424,6 @@ function getOpportunityRatings(
       )}で、次回予約を${labels.directDestination}へ誘導する余地があります。`,
     },
   ];
-}
-
-function getRecommendation(
-  industry: Industry,
-  inputs: SimulationInputs,
-): Recommendation {
-  const thirdPartyRatio = toNumber(inputs.thirdPartyRatio);
-  const directRatio = toNumber(inputs.directRatio);
-  const repeatRatio = toNumber(inputs.repeatRatio);
-  const lineAccountStatus = getLineAccountStatus(inputs);
-  const currentLineFriends = getCurrentLineFriends(inputs);
-  const labels = industryMessageLabels[industry];
-  const issueCount = Array.isArray(inputs.currentIssue)
-    ? (inputs.currentIssue as string[]).length
-    : 0;
-  let points = 0;
-
-  if (thirdPartyRatio >= 50) {
-    points += 2;
-  } else if (thirdPartyRatio >= 35) {
-    points += 1;
-  }
-
-  if (directRatio < 20) {
-    points += 1;
-  }
-
-  if (repeatRatio <= 25) {
-    points += 1;
-  }
-
-  if (lineAccountStatus === "none" || currentLineFriends < 100) {
-    points += 1;
-  }
-
-  if (issueCount >= 2 || getIssueSummary(inputs)) {
-    points += 1;
-  }
-
-  const score = Math.max(1, Math.min(5, points));
-  const title =
-    score >= 5
-      ? "導入推奨"
-      : score >= 4
-        ? "導入効果が期待できる"
-        : score >= 3
-          ? "運用施策とセットで検討"
-          : score >= 2
-            ? "一部施策から検討"
-            : "現状確認を優先";
-  const evidence = [
-    {
-      label: `${labels.externalSiteLabel}予約比率`,
-      value: `${formatNumber(thirdPartyRatio)}%`,
-      basis:
-        thirdPartyRatio >= 50
-          ? "50%以上のため、外部予約への依存度が高い判定です"
-          : thirdPartyRatio >= 35
-            ? "35%以上のため、公式導線への転換余地があります"
-            : "35%未満のため、外部予約依存は比較的低めです",
-    },
-    {
-      label: labels.directRateLabel,
-      value: `${formatNumber(directRatio)}%`,
-      basis:
-        directRatio < 20
-          ? "20%未満のため、次回予約を公式導線へ戻す余地があります"
-          : "20%以上のため、公式導線は一定確保されています",
-    },
-    {
-      label: "リピーター率",
-      value: `${formatNumber(repeatRatio)}%`,
-      basis:
-        repeatRatio <= 25
-          ? "25%以下のため、再来訪の接点づくりを重視する判定です"
-          : "25%を超えているため、既存顧客の再来訪基盤があります",
-    },
-    {
-      label: "LINE接点",
-      value:
-        lineAccountStatus === "none"
-          ? "未導入"
-          : `${formatNumber(currentLineFriends)}人`,
-      basis:
-        lineAccountStatus === "none"
-          ? "未導入のため、宿泊後に直接届ける導線が未整備です"
-          : currentLineFriends < 100
-            ? "友だち数100人未満のため、運用拡大の余地があります"
-            : "既存のLINE接点を活用できる状態です",
-    },
-  ];
-
-  return {
-    score,
-    title,
-    lead:
-      score >= 5
-        ? "入力値ベースでは、公式LINE導入の優先度が高い状態です"
-        : "入力値ベースでは、公式LINE活用による改善余地があります",
-    detail: `${labels.externalSiteLabel}予約比率、${labels.directRateLabel}、リピーター率、LINE接点の有無をもとに判定しています。${labels.externalSiteLabel}で獲得したお客様を、${labels.visitAfter}も自社で接点化し、次回の${labels.directDestination}や再来訪へつなげられるかを見ています。`,
-    evidence,
-  };
-}
-
-function getIntroductionReasons(industry: Industry, inputs: SimulationInputs) {
-  const selectedIssues = Array.isArray(inputs.currentIssue)
-    ? (inputs.currentIssue as string[])
-    : [];
-  const issueText = [...selectedIssues, String(inputs.currentIssueFree || "")].join(" ");
-  const externalSiteLabel =
-    industry === "hotel"
-      ? "OTA"
-      : industry === "golf"
-        ? "外部予約サイト"
-        : "グルメサイト";
-  const repeatActionLabel =
-    industry === "golf" ? "再来場" : industry === "restaurant" ? "再来店" : "再訪";
-  const afterVisitLabel =
-    industry === "hotel" ? "宿泊後" : industry === "golf" ? "来場後" : "来店後";
-  const reasons: string[] = [];
-  const addReason = (reason: string) => {
-    if (!reasons.includes(reason) && reasons.length < 5) {
-      reasons.push(reason);
-    }
-  };
-
-  if (toNumber(inputs.thirdPartyRatio) >= 30 || issueText.includes("手数料")) {
-    addReason(`${externalSiteLabel}予約比率が高く改善余地がある`);
-  }
-
-  if (issueText.includes("リピーター") || issueText.includes("再来")) {
-    addReason(`${repeatActionLabel}につながる接点を作れる`);
-  }
-
-  if (issueText.includes("公式") || issueText.includes("自社") || toNumber(inputs.directRatio) < 20) {
-    addReason(`${industryMessageLabels[industry].directRateLabel}をさらに高められる可能性がある`);
-  }
-
-  if (issueText.includes("接点") || issueText.includes("宿泊後") || issueText.includes("来店後")) {
-    addReason(`${afterVisitLabel}のお客様との接点を継続できる`);
-  }
-
-  if (
-    issueText.includes("季節") ||
-    issueText.includes("空室") ||
-    issueText.includes("予約枠") ||
-    issueText.includes("空席") ||
-    issueText.includes("案内")
-  ) {
-    addReason(industryMessageLabels[industry].infoDelivery);
-  }
-
-  addReason("リピーター施策を始められる");
-  addReason(`${externalSiteLabel}で獲得したお客様を自社の顧客接点として育てられる`);
-
-  return reasons.slice(0, 5);
 }
 
 function getSalesSummary(
@@ -2498,23 +2298,14 @@ export default function EstimateSimulator({
     () => getAnnualOtaCommissionEstimate(activeIndustry, inputs),
     [activeIndustry, inputs],
   );
-  const introductionReasons = useMemo(
-    () => getIntroductionReasons(activeIndustry, inputs),
-    [activeIndustry, inputs],
-  );
   const opportunityRatings = useMemo(
     () => getOpportunityRatings(activeIndustry, inputs),
-    [activeIndustry, inputs],
-  );
-  const recommendation = useMemo(
-    () => getRecommendation(activeIndustry, inputs),
     [activeIndustry, inputs],
   );
   const salesSummary = useMemo(
     () => getSalesSummary(activeIndustry, inputs),
     [activeIndustry, inputs],
   );
-  const roomNightCheck = useMemo(() => getRoomNightCheck(inputs), [inputs]);
   const mainSheetRows = useMemo(
     () =>
       sheetBlock.rows.filter((row) =>
@@ -2589,7 +2380,9 @@ export default function EstimateSimulator({
           [key]: value,
         },
       }));
-      setHasSimulationRun(false);
+      if (mode === "input") {
+        setHasSimulationRun(false);
+      }
       setAiComment(null);
       setIsSaved(false);
       return;
@@ -2611,22 +2404,9 @@ export default function EstimateSimulator({
         [key]: nextValue,
       },
     }));
-    setHasSimulationRun(false);
-    setAiComment(null);
-    setIsSaved(false);
-  };
-
-  const updateLineAccountStatus = (value: string) => {
-    setInputsByIndustry((current) => ({
-      ...current,
-      [activeIndustry]: {
-        ...current[activeIndustry],
-        lineAccountStatus: value,
-        currentLineFriends:
-          value === "none" ? 0 : current[activeIndustry].currentLineFriends,
-      },
-    }));
-    setHasSimulationRun(false);
+    if (mode === "input") {
+      setHasSimulationRun(false);
+    }
     setAiComment(null);
     setIsSaved(false);
   };
@@ -2648,7 +2428,9 @@ export default function EstimateSimulator({
         },
       };
     });
-    setHasSimulationRun(false);
+    if (mode === "input") {
+      setHasSimulationRun(false);
+    }
     setAiComment(null);
     setIsSaved(false);
   };
@@ -2852,10 +2634,8 @@ export default function EstimateSimulator({
                         <HotelHearingForm
                           inputs={inputs}
                           isAnalyzing={isAnalyzing || isRunningSimulation}
-                          roomNightCheck={roomNightCheck}
                           onInputChange={updateInput}
                           onIssueToggle={toggleIssue}
-                          onLineAccountChange={updateLineAccountStatus}
                           onSubmit={runSimulation}
                         />
                       ) : (
@@ -2911,8 +2691,14 @@ export default function EstimateSimulator({
               ) : null}
             </div>
 
-            <section className="border-b border-black/8 bg-white px-5 py-6">
-              <RecommendationCard recommendation={recommendation} />
+            <section className="border-b border-black/8 bg-[#f7f8fa] p-5">
+              <div className="grid gap-px bg-black/8 lg:grid-cols-3">
+                <ProposalInputSections
+                  industry={activeIndustry}
+                  inputs={inputs}
+                  onInputChange={updateInput}
+                />
+              </div>
             </section>
 
             <section className="border-b border-black/8 bg-white px-5 py-6">
@@ -2986,12 +2772,54 @@ export default function EstimateSimulator({
               <SalesTalkAssist title="商談トーク例：施策提案">
                 まず誰を増やしたいかを決め、その顧客にLINEで何を届けるかを整理します。数字は契約を迫るためではなく、施策の優先順位を決めるために使います。
               </SalesTalkAssist>
+              <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+                <button
+                  type="button"
+                  onClick={saveSimulation}
+                  disabled={isSaving}
+                  className="inline-flex h-10 items-center justify-center gap-2 bg-[#7c3aed] px-4 text-sm font-medium text-white transition hover:bg-[#6d28d9] disabled:cursor-not-allowed disabled:bg-[#c4b5fd]"
+                >
+                  {isSaving ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Save size={16} />
+                  )}
+                  {isSaving
+                    ? "保存中"
+                    : isSaved
+                      ? "保存済み"
+                      : "シミュレーションを保存する"}
+                </button>
+                <Link
+                  href="/simulation/commo"
+                  className="inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
+                >
+                  入力内容を修正する
+                </Link>
+              </div>
             </section>
 
-	            <section className="border-b border-black/8 bg-white px-5 py-6">
-	              <p className="text-[11px] tracking-[0.18em] text-black/35">
-	                3. 顧客基盤・自社予約移行・改善内訳
-	              </p>
+            <section className="border-b border-black/8 bg-[#f7f8fa]">
+              <button
+                type="button"
+                onClick={() => setIsDetailSimulationOpen((open) => !open)}
+                className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-black/72 transition hover:text-[#5b21b6]"
+                aria-expanded={isDetailSimulationOpen}
+              >
+                詳しい分析を見る
+                <ChevronDown
+                  size={16}
+                  className={[
+                    "transition",
+                    isDetailSimulationOpen ? "rotate-180" : "",
+                  ].join(" ")}
+                />
+              </button>
+              {isDetailSimulationOpen ? (
+                <div className="border-t border-black/8 bg-white px-5 py-6">
+                  <p className="text-[11px] tracking-[0.18em] text-black/35">
+                    顧客基盤・自社予約移行・改善内訳
+                  </p>
               <FeeReductionScenarioControls
                 externalSiteLabel={activeLabels.externalSiteLabel}
                 startMonth={feeReductionStartMonth}
@@ -3075,118 +2903,7 @@ export default function EstimateSimulator({
                   スタッフのお声がけ、登録特典、{activeLabels.visitAfter}の案内を行うことで、LINE友だち数はさらに増加する可能性があります。
                 </p>
               </div>
-            </section>
-
-            <section className="border-b border-black/8 bg-white px-5 py-6">
-              <p className="text-[11px] tracking-[0.18em] text-black/35">
-                施策サポート
-              </p>
-              {error ? (
-                <p className="mt-3 text-xs text-black/45">
-                  API応答の代わりにローカル診断コメントを表示しています: {error}
-                </p>
-              ) : null}
-              <div className="mt-4 grid gap-px bg-black/8 lg:grid-cols-2">
-                <article className="bg-white p-5">
-                  <h3 className="text-base font-medium">施設診断</h3>
-                  {isAnalyzing ? (
-                    <p className="mt-4 text-sm leading-8 text-black/55">
-                      入力内容から診断コメントを作成しています。
-                    </p>
-                  ) : (
-                    <p className="mt-4 text-sm leading-8 text-black/66">
-                      {salesSummary.diagnosis}
-                    </p>
-                  )}
-                </article>
-                <article className="bg-white p-5">
-                  <h3 className="text-base font-medium">優先施策</h3>
-                  <ul className="mt-4 space-y-3 text-sm leading-7 text-black/66">
-                    {salesSummary.priorities.map((priority) => (
-                      <li key={priority} className="flex gap-3">
-                        <span className="mt-2 h-1.5 w-1.5 shrink-0 bg-[#7c3aed]" />
-                        <span>{priority}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </article>
-                <article className="bg-white p-5">
-                  <h3 className="text-sm font-medium">commo.でできること</h3>
-                  <ul className="mt-4 space-y-2 text-xs leading-6 text-black/58">
-                    {salesSummary.supportItems.map((item) => (
-                      <li key={item}>{item}</li>
-                    ))}
-                  </ul>
-                </article>
-              </div>
-
-              <div className="mt-6 border border-black/8 bg-[#fbfbfc] p-5">
-                <h3 className="text-lg font-medium">
-                  この施設は公式LINE導入との相性が高い状態です
-                </h3>
-                <p className="mt-3 text-sm font-medium text-black/72">
-                  導入をおすすめする理由
-                </p>
-                <ul className="mt-4 grid gap-3 text-sm leading-7 text-black/66 md:grid-cols-2">
-                  {introductionReasons.slice(0, 4).map((reason) => (
-                    <li key={reason} className="flex gap-3">
-                      <span className="mt-2 h-1.5 w-1.5 shrink-0 bg-[#7c3aed]" />
-                      <span>{reason}</span>
-                    </li>
-                  ))}
-                </ul>
-                <div className="mt-5 text-sm leading-8 text-black/66">
-                  <p>公式LINEは、予約を増やすためだけのツールではありません。</p>
-                  <p className="mt-2">
-                    {activeLabels.externalSiteLabel}で獲得したお客様との関係を、{activeLabels.visitAfter}も自社で育て、次回の{activeLabels.directDestination}へつなげていくための仕組みです。
-                  </p>
-                </div>
-                <div className="mt-5 flex flex-col gap-2 sm:flex-row">
-                  <button
-                    type="button"
-                    onClick={saveSimulation}
-                    disabled={isSaving}
-                    className="inline-flex h-10 items-center justify-center gap-2 bg-[#7c3aed] px-4 text-sm font-medium text-white transition hover:bg-[#6d28d9] disabled:cursor-not-allowed disabled:bg-[#c4b5fd]"
-                  >
-                    {isSaving ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <Save size={16} />
-                    )}
-                    {isSaving
-                      ? "保存中"
-                      : isSaved
-                        ? "保存済み"
-                        : "シミュレーションを保存する"}
-                  </button>
-                  <Link
-                    href="/simulation/commo"
-                    className="inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
-                  >
-                    入力内容を修正する
-                  </Link>
-                </div>
-              </div>
-            </section>
-
-            <section className="bg-[#f7f8fa]">
-              <button
-                type="button"
-                onClick={() => setIsDetailSimulationOpen((open) => !open)}
-                className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-black/72 transition hover:text-[#5b21b6]"
-                aria-expanded={isDetailSimulationOpen}
-	              >
-	                7. 月別12ヶ月推移・8. 料金プラン比較を見る
-                <ChevronDown
-                  size={16}
-                  className={[
-                    "transition",
-                    isDetailSimulationOpen ? "rotate-180" : "",
-                  ].join(" ")}
-                />
-              </button>
-              {isDetailSimulationOpen ? (
-                <>
+                  <div className="mt-6 border-t border-black/8 pt-6">
                   <PricingPlanComparison
                     selectedPlan={selectedPricingPlan}
                     summaries={pricingPlanSummaries}
@@ -3235,7 +2952,8 @@ export default function EstimateSimulator({
                     inputs={inputs}
                     assumptions={activeAssumptions}
                   />
-                </>
+                  </div>
+                </div>
               ) : null}
             </section>
           </section>
@@ -3491,226 +3209,267 @@ function ProposalInputSections({
   const selectedCase = String(inputs.lineGrowthCase || "standard") as LineGrowthCaseKey;
   const hasAdditionalService =
     additionalServices.length > 0 && !additionalServices.includes("追加サービスなし");
+  const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
 
   return (
     <>
-      <ToggleOptionGroup
-        title="今後、特に増やしたい利用者"
-        description="複数選択できます。結果ページでは、顧客分類とおすすめ施策の根拠に使います。"
-        options={targetCustomerOptionsByIndustry[industry]}
-        values={targetCustomers}
-        onChange={(values) => {
-          onInputChange("targetCustomers", values);
-          if (!values.includes(String(inputs.priorityTargetCustomer || ""))) {
-            onInputChange("priorityTargetCustomer", values[0] || "", true);
-          }
-        }}
-      />
-      <label className="bg-white p-5 lg:col-span-3">
-        <span className="text-[11px] tracking-[0.16em] text-black/42">
-          最優先で増やしたい顧客
-        </span>
-        <select
-          value={String(inputs.priorityTargetCustomer || "")}
-          onChange={(event) =>
-            onInputChange("priorityTargetCustomer", event.target.value, true)
-          }
-          className="mt-3 h-11 w-full border border-black/10 bg-white px-3 text-sm outline-none transition focus:border-[#7c3aed]"
-        >
-          <option value="">選択してください</option>
-          {targetCustomers.map((target) => (
-            <option key={target} value={target}>
-              {target}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="bg-white p-5 lg:col-span-3">
-        <span className="text-[11px] tracking-[0.16em] text-black/42">
-          今後、最も改善したい項目
-        </span>
-        <select
-          value={String(inputs.improvementFocus || "")}
-          onChange={(event) =>
-            onInputChange("improvementFocus", event.target.value, true)
-          }
-          className="mt-3 h-11 w-full border border-black/10 bg-white px-3 text-sm outline-none transition focus:border-[#7c3aed]"
-        >
-          <option value="">選択してください</option>
-          {improvementFocusOptionsByIndustry[industry].map((focus) => (
-            <option key={focus} value={focus}>
-              {focus}
-            </option>
-          ))}
-        </select>
-        {String(inputs.improvementFocus || "") === "その他" ? (
-          <textarea
-            value={String(inputs.improvementFocusOther || "")}
-            onChange={(event) =>
-              onInputChange("improvementFocusOther", event.target.value, true)
-            }
-            placeholder="改善したい項目を入力してください"
-            rows={3}
-            className="mt-3 w-full resize-none border border-black/10 px-3 py-3 text-sm leading-7 outline-none transition focus:border-[#7c3aed]"
-          />
-        ) : null}
-      </label>
-      <ToggleOptionGroup
-        title="実施予定のLINE登録導線"
-        description={`推奨ケース：${lineGrowthCases[recommendedCase].label}。選択した導線に応じて、友だち追加シナリオの目安を表示します。`}
-        options={lineChannelOptions}
-        values={lineChannels}
-        onChange={(values) => {
-          onInputChange("lineChannels", values);
-          const nextInputs = { ...inputs, lineChannels: values };
-          onInputChange("lineGrowthCase", getRecommendedLineGrowthCase(nextInputs), true);
-        }}
-      />
       <div className="bg-white p-5 lg:col-span-3">
-        <p className="text-[11px] tracking-[0.16em] text-black/42">
-          友だち追加シナリオ
-        </p>
-        <div className="mt-4 grid gap-2 md:grid-cols-3">
-          {(Object.entries(lineGrowthCases) as [LineGrowthCaseKey, typeof lineGrowthCases[LineGrowthCaseKey]][]).map(
-            ([key, lineCase]) => (
-              <label
-                key={key}
-                className={[
-                  "min-h-11 border px-3 py-3 text-sm leading-6 transition",
-                  selectedCase === key
-                    ? "border-[#7c3aed] bg-[#7c3aed]/5"
-                    : "border-black/10 hover:border-black/25",
-                ].join(" ")}
-              >
-                <span className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    checked={selectedCase === key}
-                    onChange={() => onInputChange("lineGrowthCase", key, true)}
-                    className="h-4 w-4 accent-[#7c3aed]"
-                  />
-                  <span className="font-medium">{lineCase.label}</span>
-                </span>
-                <span className="mt-2 block text-xs text-black/50">
-                  月間利用者数の{lineCase.rate.toFixed(1)}%
-                </span>
-              </label>
-            ),
-          )}
-        </div>
+        <button
+          type="button"
+          aria-expanded={isAdvancedOpen}
+          onClick={() => setIsAdvancedOpen((current) => !current)}
+          className="flex w-full items-center justify-between gap-4 border border-black/10 px-4 py-3 text-left transition hover:border-black/25 hover:bg-black/[0.02]"
+        >
+          <span>
+            <span className="block text-sm font-medium">詳細条件を設定する</span>
+            <span className="mt-1 block text-xs leading-5 text-black/50">
+              顧客分類、LINE導線、配信条件、追加サービスを細かく調整できます。
+            </span>
+          </span>
+          <ChevronDown
+            size={18}
+            className={[
+              "shrink-0 text-black/45 transition",
+              isAdvancedOpen ? "rotate-180" : "",
+            ].join(" ")}
+          />
+        </button>
       </div>
-      <div className="bg-white p-5 lg:col-span-3">
-        <p className="text-[11px] tracking-[0.16em] text-black/42">
-          LINE施策の試算前提
-        </p>
-        <p className="mt-2 text-xs leading-6 text-black/50">
-          公開事例を参考にした初期値です。実際の提案では施設の運用状況に合わせて調整してください。
-        </p>
-        <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-4">
-          <HearingInput
-            field={{
-              key: "lineBlockRate",
-              label: "LINEブロック率想定",
-              suffix: "%",
-              placeholder: `${lineBenchmarkDefaults.blockRate}`,
-              subLabel: "追加友だちから配信が届かなくなる割合",
-            }}
-            value={inputs.lineBlockRate}
-            onInputChange={onInputChange}
-          />
-          <HearingInput
-            field={{
-              key: "friendRepeatConversionRate",
-              label: "友だち→年間追加再来訪",
-              suffix: "%",
-              placeholder: `${lineBenchmarkDefaults.friendRepeatConversionRate}`,
-              subLabel: "宿泊業は来訪周期が長いため保守的に置く",
-            }}
-            value={inputs.friendRepeatConversionRate}
-            onInputChange={onInputChange}
-          />
-          <HearingInput
-            field={{
-              key: "directBookingShiftRate",
-              label: "再来訪時の自社予約シフト率",
-              suffix: "%",
-              placeholder: `${lineBenchmarkDefaults.directBookingShiftRate}`,
-              subLabel: "再来訪のうち自社予約へ移る仮説値",
-            }}
-            value={inputs.directBookingShiftRate}
-            onInputChange={onInputChange}
-          />
-          <HearingInput
-            field={{
-              key: "averageStayNights",
-              label: industry === "hotel" ? "再来訪1回あたり平均泊数" : "再来訪1回あたり利用回数",
-              suffix: industry === "hotel" ? "泊" : "回",
-              placeholder: `${industry === "hotel" ? lineBenchmarkDefaults.averageStayNights : 1}`,
-              subLabel: "手数料軽減額への換算に使用",
-            }}
-            value={inputs.averageStayNights}
-            onInputChange={onInputChange}
-          />
-          <HearingInput
-            field={{
-              key: "monthlyBroadcastCount",
-              label: "月間配信回数",
-              suffix: "回",
-              placeholder: `${lineBenchmarkDefaults.monthlyBroadcastCount}`,
-              subLabel: "全員配信・セグメント配信の通数試算に使用",
-            }}
-            value={inputs.monthlyBroadcastCount}
-            onInputChange={onInputChange}
-          />
-          <HearingInput
-            field={{
-              key: "segmentDeliveryRate",
-              label: "平均セグメント配信率",
-              suffix: "%",
-              placeholder: `${lineBenchmarkDefaults.segmentDeliveryRate}`,
-              subLabel: "1回の配信で実際に送る友だちの割合",
-            }}
-            value={inputs.segmentDeliveryRate}
-            onInputChange={onInputChange}
-          />
-        </div>
-        <div className="mt-4 grid gap-3 lg:grid-cols-3">
-          {lineBenchmarkEvidence.map((item) => (
-            <div key={item.label} className="border border-black/8 bg-[#fbfbfc] p-4">
-              <p className="text-sm font-medium text-black/76">{item.label}</p>
-              <p className="mt-2 text-xs leading-6 text-black/55">{item.body}</p>
-            </div>
-          ))}
-        </div>
-      </div>
-      <ToggleOptionGroup
-        title="LINEを活用して案内したい追加サービス"
-        options={additionalServiceOptionsByIndustry[industry]}
-        values={additionalServices}
-        onChange={(values) => onInputChange("additionalServices", values)}
-      />
-      {hasAdditionalService ? (
+
+      {isAdvancedOpen ? (
         <>
-          <HearingInput
-            field={{
-              key: "additionalServiceUsageRate",
-              label: "想定利用率",
-              suffix: "%",
-              placeholder: "例：8",
+          <ToggleOptionGroup
+            title="今後、特に増やしたい利用者"
+            description="複数選択できます。結果ページでは、顧客分類とおすすめ施策の根拠に使います。"
+            options={targetCustomerOptionsByIndustry[industry]}
+            values={targetCustomers}
+            onChange={(values) => {
+              onInputChange("targetCustomers", values);
+              if (!values.includes(String(inputs.priorityTargetCustomer || ""))) {
+                onInputChange("priorityTargetCustomer", values[0] || "", true);
+              }
             }}
-            value={inputs.additionalServiceUsageRate}
-            onInputChange={onInputChange}
           />
-          <HearingInput
-            field={{
-              key: "additionalServiceUnitPrice",
-              label: "追加サービス平均単価",
-              suffix: "円",
-              placeholder: "例：1,500",
+          <label className="bg-white p-5 lg:col-span-3">
+            <span className="text-[11px] tracking-[0.16em] text-black/42">
+              最優先で増やしたい顧客
+            </span>
+            <select
+              value={String(inputs.priorityTargetCustomer || "")}
+              onChange={(event) =>
+                onInputChange("priorityTargetCustomer", event.target.value, true)
+              }
+              className="mt-3 h-11 w-full border border-black/10 bg-white px-3 text-sm outline-none transition focus:border-[#7c3aed]"
+            >
+              <option value="">選択してください</option>
+              {targetCustomers.map((target) => (
+                <option key={target} value={target}>
+                  {target}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="bg-white p-5 lg:col-span-3">
+            <span className="text-[11px] tracking-[0.16em] text-black/42">
+              今後、最も改善したい項目
+            </span>
+            <select
+              value={String(inputs.improvementFocus || "")}
+              onChange={(event) =>
+                onInputChange("improvementFocus", event.target.value, true)
+              }
+              className="mt-3 h-11 w-full border border-black/10 bg-white px-3 text-sm outline-none transition focus:border-[#7c3aed]"
+            >
+              <option value="">選択してください</option>
+              {improvementFocusOptionsByIndustry[industry].map((focus) => (
+                <option key={focus} value={focus}>
+                  {focus}
+                </option>
+              ))}
+            </select>
+            {String(inputs.improvementFocus || "") === "その他" ? (
+              <textarea
+                value={String(inputs.improvementFocusOther || "")}
+                onChange={(event) =>
+                  onInputChange("improvementFocusOther", event.target.value, true)
+                }
+                placeholder="改善したい項目を入力してください"
+                rows={3}
+                className="mt-3 w-full resize-none border border-black/10 px-3 py-3 text-sm leading-7 outline-none transition focus:border-[#7c3aed]"
+              />
+            ) : null}
+          </label>
+          <ToggleOptionGroup
+            title="実施予定のLINE登録導線"
+            description={`推奨ケース：${lineGrowthCases[recommendedCase].label}。選択した導線に応じて、友だち追加シナリオの目安を表示します。`}
+            options={lineChannelOptions}
+            values={lineChannels}
+            onChange={(values) => {
+              onInputChange("lineChannels", values);
+              const nextInputs = { ...inputs, lineChannels: values };
+              onInputChange(
+                "lineGrowthCase",
+                getRecommendedLineGrowthCase(nextInputs),
+                true,
+              );
             }}
-            value={inputs.additionalServiceUnitPrice}
-            onInputChange={onInputChange}
           />
+          <div className="bg-white p-5 lg:col-span-3">
+            <p className="text-[11px] tracking-[0.16em] text-black/42">
+              友だち追加シナリオ
+            </p>
+            <div className="mt-4 grid gap-2 md:grid-cols-3">
+              {(Object.entries(lineGrowthCases) as [
+                LineGrowthCaseKey,
+                (typeof lineGrowthCases)[LineGrowthCaseKey],
+              ][]).map(([key, lineCase]) => (
+                <label
+                  key={key}
+                  className={[
+                    "min-h-11 border px-3 py-3 text-sm leading-6 transition",
+                    selectedCase === key
+                      ? "border-[#7c3aed] bg-[#7c3aed]/5"
+                      : "border-black/10 hover:border-black/25",
+                  ].join(" ")}
+                >
+                  <span className="flex items-center gap-3">
+                    <input
+                      type="radio"
+                      checked={selectedCase === key}
+                      onChange={() => onInputChange("lineGrowthCase", key, true)}
+                      className="h-4 w-4 accent-[#7c3aed]"
+                    />
+                    <span className="font-medium">{lineCase.label}</span>
+                  </span>
+                  <span className="mt-2 block text-xs text-black/50">
+                    月間利用者数の{lineCase.rate.toFixed(1)}%
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="bg-white p-5 lg:col-span-3">
+            <p className="text-[11px] tracking-[0.16em] text-black/42">
+              LINE施策の試算前提
+            </p>
+            <p className="mt-2 text-xs leading-6 text-black/50">
+              公開事例を参考にした初期値です。実際の提案では施設の運用状況に合わせて調整してください。
+            </p>
+            <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-4">
+              <HearingInput
+                field={{
+                  key: "lineBlockRate",
+                  label: "LINEブロック率想定",
+                  suffix: "%",
+                  placeholder: `${lineBenchmarkDefaults.blockRate}`,
+                  subLabel: "追加友だちから配信が届かなくなる割合",
+                }}
+                value={inputs.lineBlockRate}
+                onInputChange={onInputChange}
+              />
+              <HearingInput
+                field={{
+                  key: "friendRepeatConversionRate",
+                  label: "友だち→年間追加再来訪",
+                  suffix: "%",
+                  placeholder: `${lineBenchmarkDefaults.friendRepeatConversionRate}`,
+                  subLabel: "宿泊業は来訪周期が長いため保守的に置く",
+                }}
+                value={inputs.friendRepeatConversionRate}
+                onInputChange={onInputChange}
+              />
+              <HearingInput
+                field={{
+                  key: "directBookingShiftRate",
+                  label: "再来訪時の自社予約シフト率",
+                  suffix: "%",
+                  placeholder: `${lineBenchmarkDefaults.directBookingShiftRate}`,
+                  subLabel: "再来訪のうち自社予約へ移る仮説値",
+                }}
+                value={inputs.directBookingShiftRate}
+                onInputChange={onInputChange}
+              />
+              <HearingInput
+                field={{
+                  key: "averageStayNights",
+                  label:
+                    industry === "hotel"
+                      ? "再来訪1回あたり平均泊数"
+                      : "再来訪1回あたり利用回数",
+                  suffix: industry === "hotel" ? "泊" : "回",
+                  placeholder: `${industry === "hotel" ? lineBenchmarkDefaults.averageStayNights : 1}`,
+                  subLabel: "手数料軽減額への換算に使用",
+                }}
+                value={inputs.averageStayNights}
+                onInputChange={onInputChange}
+              />
+              <HearingInput
+                field={{
+                  key: "monthlyBroadcastCount",
+                  label: "月間配信回数",
+                  suffix: "回",
+                  placeholder: `${lineBenchmarkDefaults.monthlyBroadcastCount}`,
+                  subLabel: "全員配信・セグメント配信の通数試算に使用",
+                }}
+                value={inputs.monthlyBroadcastCount}
+                onInputChange={onInputChange}
+              />
+              <HearingInput
+                field={{
+                  key: "segmentDeliveryRate",
+                  label: "平均セグメント配信率",
+                  suffix: "%",
+                  placeholder: `${lineBenchmarkDefaults.segmentDeliveryRate}`,
+                  subLabel: "1回の配信で実際に送る友だちの割合",
+                }}
+                value={inputs.segmentDeliveryRate}
+                onInputChange={onInputChange}
+              />
+            </div>
+            <div className="mt-4 grid gap-3 lg:grid-cols-3">
+              {lineBenchmarkEvidence.map((item) => (
+                <div
+                  key={item.label}
+                  className="border border-black/8 bg-[#fbfbfc] p-4"
+                >
+                  <p className="text-sm font-medium text-black/76">{item.label}</p>
+                  <p className="mt-2 text-xs leading-6 text-black/55">
+                    {item.body}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+          <ToggleOptionGroup
+            title="LINEを活用して案内したい追加サービス"
+            options={additionalServiceOptionsByIndustry[industry]}
+            values={additionalServices}
+            onChange={(values) => onInputChange("additionalServices", values)}
+          />
+          {hasAdditionalService ? (
+            <>
+              <HearingInput
+                field={{
+                  key: "additionalServiceUsageRate",
+                  label: "想定利用率",
+                  suffix: "%",
+                  placeholder: "例：8",
+                }}
+                value={inputs.additionalServiceUsageRate}
+                onInputChange={onInputChange}
+              />
+              <HearingInput
+                field={{
+                  key: "additionalServiceUnitPrice",
+                  label: "追加サービス平均単価",
+                  suffix: "円",
+                  placeholder: "例：1,500",
+                }}
+                value={inputs.additionalServiceUnitPrice}
+                onInputChange={onInputChange}
+              />
+            </>
+          ) : null}
         </>
       ) : null}
     </>
@@ -3796,11 +3555,6 @@ function GenericHearingForm({
           />
         );
       })}
-      <ProposalInputSections
-        industry={industry}
-        inputs={inputs}
-        onInputChange={onInputChange}
-      />
       <SubmitBlock isAnalyzing={isAnalyzing} onSubmit={onSubmit} />
     </div>
   );
@@ -3809,22 +3563,16 @@ function GenericHearingForm({
 function HotelHearingForm({
   inputs,
   isAnalyzing,
-  roomNightCheck,
   onInputChange,
   onIssueToggle,
-  onLineAccountChange,
   onSubmit,
 }: {
   inputs: SimulationInputs;
   isAnalyzing: boolean;
-  roomNightCheck: { roomNights: number; stayType: string } | null;
   onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
   onIssueToggle: (issue: string) => void;
-  onLineAccountChange: (value: string) => void;
   onSubmit: () => void;
 }) {
-  const lineAccountStatus = getLineAccountStatus(inputs);
-
   return (
     <div className="grid gap-px bg-black/8 lg:grid-cols-3">
       <div className="bg-white p-5 lg:col-span-3">
@@ -3876,95 +3624,18 @@ function HotelHearingForm({
             );
           })}
 
-          {section.title === "顧客・LINE活用状況" ? (
-            <>
-              <LineAccountSelector
-                value={lineAccountStatus}
-                onLineAccountChange={onLineAccountChange}
-              />
-              {lineAccountStatus !== "none" ? (
-                <HearingInput
-                  field={getFieldConfig("hotel", "currentLineFriends")!}
-                  value={inputs.currentLineFriends}
-                  onInputChange={onInputChange}
-                  className="lg:col-span-3"
-                />
-              ) : null}
-            </>
-          ) : null}
         </section>
       ))}
-
-      {roomNightCheck ? (
-        <div className="bg-[#fffbeb] p-5 text-sm leading-7 text-[#92400e] lg:col-span-3">
-          <p className="font-medium">入力内容の確認</p>
-          <p className="mt-2">
-            客室数と平均客室稼働率から、月間約{formatNumber(
-              roomNightCheck.roomNights,
-            )}室泊と試算されます。
-          </p>
-          <p>
-            月間利用者数が{formatNumber(
-              toNumber(inputs.monthlyCustomers),
-            )}人の場合、{roomNightCheck.stayType}として計算されます。
-          </p>
-          <p>入力値が施設の実態に合っているかご確認ください。</p>
-        </div>
-      ) : null}
-
       <IssueSelector
         industry="hotel"
         inputs={inputs}
         onInputChange={onInputChange}
         onIssueToggle={onIssueToggle}
       />
-      <ProposalInputSections
-        industry="hotel"
-        inputs={inputs}
-        onInputChange={onInputChange}
-      />
       <SubmitBlock
         isAnalyzing={isAnalyzing}
         onSubmit={onSubmit}
       />
-    </div>
-  );
-}
-
-function LineAccountSelector({
-  value,
-  onLineAccountChange,
-}: {
-  value: string;
-  onLineAccountChange: (value: string) => void;
-}) {
-  return (
-    <div className="bg-white p-5 lg:col-span-3">
-      <p className="text-[11px] tracking-[0.16em] text-black/42">
-        LINE公式アカウント
-        <RequiredBadge />
-      </p>
-      <div className="mt-4 grid gap-2 md:grid-cols-3">
-        {lineAccountOptions.map((option) => (
-          <label
-            key={option.value}
-            className={[
-              "flex min-h-11 cursor-pointer items-center gap-3 border px-3 py-2 text-sm leading-6 transition",
-              value === option.value
-                ? "border-[#7c3aed] bg-[#7c3aed]/5"
-                : "border-black/10 hover:border-black/25",
-            ].join(" ")}
-          >
-            <input
-              type="radio"
-              checked={value === option.value}
-              onChange={() => onLineAccountChange(option.value)}
-              className="h-4 w-4 accent-[#7c3aed]"
-            />
-            <span>{option.label}</span>
-          </label>
-        ))}
-      </div>
     </div>
   );
 }
@@ -4236,57 +3907,6 @@ function StarRating({ score }: { score: number }) {
       {filled}
       <span className="text-black/20">{empty}</span>
     </span>
-  );
-}
-
-function RecommendationCard({ recommendation }: { recommendation: Recommendation }) {
-  return (
-    <article className="border border-[#7c3aed]/25 bg-[#f7f3ff] p-5">
-      <p className="text-[11px] tracking-[0.18em] text-[#5b21b6]/70">
-        この施設の診断結果
-      </p>
-      <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h3 className="text-2xl font-semibold text-[#5b21b6]">
-            {recommendation.title}
-          </h3>
-          <p className="mt-2 text-xl">
-            <StarRating score={recommendation.score} />
-          </p>
-        </div>
-        <p className="text-base font-medium text-black/72">
-          {recommendation.lead}
-        </p>
-      </div>
-      <p className="mt-4 max-w-3xl text-sm leading-8 text-black/66">
-        {recommendation.detail}
-      </p>
-      <div className="mt-5 border border-[#7c3aed]/15 bg-white/70 p-4">
-        <p className="text-xs font-medium text-[#5b21b6]">
-          判定に使った根拠
-        </p>
-        <div className="mt-3 grid gap-3 md:grid-cols-2">
-          {recommendation.evidence.map((item) => (
-            <div key={item.label} className="border border-black/8 bg-white p-3">
-              <div className="flex items-baseline justify-between gap-3">
-                <p className="text-[11px] tracking-[0.12em] text-black/42">
-                  {item.label}
-                </p>
-                <p className="text-base font-semibold text-black/78">
-                  {item.value}
-                </p>
-              </div>
-              <p className="mt-2 text-xs leading-6 text-black/58">
-                {item.basis}
-              </p>
-            </div>
-          ))}
-        </div>
-        <p className="mt-3 text-xs leading-6 text-black/45">
-          星評価は上記項目と入力された課題内容を点数化した目安です。効果を保証するものではなく、導入検討時に確認すべき優先度として表示しています。
-        </p>
-      </div>
-    </article>
   );
 }
 

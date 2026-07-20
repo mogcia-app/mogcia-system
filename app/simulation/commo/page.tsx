@@ -1,7 +1,6 @@
 import { ArrowRight, MessageCircle, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 
-import AuthGuard from "@/components/auth-guard";
 import EstimateSimulator from "@/components/estimate-simulator";
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
@@ -45,9 +44,7 @@ export default function CommoSimulationPage() {
           </div>
         </section>
 
-        <AuthGuard>
-          <EstimateSimulator />
-        </AuthGuard>
+        <EstimateSimulator />
       </section>
 
       <SiteFooter />

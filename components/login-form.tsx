@@ -21,6 +21,13 @@ const authErrorMessages: Record<string, string> = {
   "auth/too-many-requests": "ログイン試行が多すぎます。少し時間をおいて再度お試しください。",
 };
 
+const authCookieName = "mogcia-auth";
+
+function saveAuthCookie(remember: boolean) {
+  const maxAge = remember ? "; max-age=2592000" : "";
+  document.cookie = `${authCookieName}=1; path=/; samesite=lax${maxAge}`;
+}
+
 function getAuthErrorMessage(error: unknown) {
   if (error instanceof Error && error.message === "missing-firebase-config") {
     return "Firebaseの公開環境変数が設定されていません。";
@@ -57,6 +64,7 @@ export default function LoginForm() {
         remember ? browserLocalPersistence : browserSessionPersistence,
       );
       await signInWithEmailAndPassword(firebaseAuth, email, password);
+      saveAuthCookie(remember);
       router.push("/home");
     } catch (caughtError) {
       setError(getAuthErrorMessage(caughtError));

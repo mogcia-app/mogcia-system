@@ -7,6 +7,12 @@ import { ReactNode, useEffect, useState } from "react";
 
 import { firebaseAuth } from "@/lib/firebase";
 
+const authCookieName = "mogcia-auth";
+
+function clearAuthCookie() {
+  document.cookie = `${authCookieName}=; path=/; max-age=0; samesite=lax`;
+}
+
 export default function AuthGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [isChecking, setIsChecking] = useState(Boolean(firebaseAuth));
@@ -18,6 +24,7 @@ export default function AuthGuard({ children }: { children: ReactNode }) {
 
     const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
       if (!user) {
+        clearAuthCookie();
         router.replace("/");
         return;
       }
