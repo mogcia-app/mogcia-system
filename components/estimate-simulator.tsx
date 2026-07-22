@@ -550,32 +550,45 @@ const golfBookingCostModelOptions: {
 
 const lineGrowthCases: Record<
   LineGrowthCaseKey,
-  { label: string; rate: number; surveyResponseRate: number; description: string }
+  {
+    label: string;
+    rate: number;
+    friendRepeatConversionRate: number;
+    directBookingShiftRate: number;
+    surveyResponseRate: number;
+    description: string;
+  }
 > = {
   cautious: {
     label: "慎重ケース",
-    rate: 1,
-    surveyResponseRate: 35,
-    description: "QRコード設置など、受け身の導線を中心にした想定",
+    rate: 2,
+    friendRepeatConversionRate: 8,
+    directBookingShiftRate: 5,
+    surveyResponseRate: 12,
+    description: "QRコード設置など、受け身の導線を中心にした保守的な想定",
   },
   standard: {
     label: "標準ケース",
-    rate: 3,
-    surveyResponseRate: 45,
-    description: "QRコード設置に加え、スタッフ案内を行う想定",
+    rate: 3.5,
+    friendRepeatConversionRate: 15,
+    directBookingShiftRate: 10,
+    surveyResponseRate: 12,
+    description: "QRコード設置に加え、スタッフ案内を行う標準的な想定",
   },
   aggressive: {
     label: "積極ケース",
-    rate: 5,
-    surveyResponseRate: 55,
-    description: "スタッフ案内と登録特典まで組み合わせる想定",
+    rate: 6,
+    friendRepeatConversionRate: 22,
+    directBookingShiftRate: 15,
+    surveyResponseRate: 12,
+    description: "スタッフ案内と登録特典まで組み合わせる積極的な想定",
   },
 };
 
 const lineBenchmarkDefaults = {
-  blockRate: 27,
+  blockRate: 30,
   friendRepeatConversionRate: 15,
-  directBookingShiftRate: 50,
+  directBookingShiftRate: 10,
   averageStayNights: 1.5,
   monthlyBroadcastCount: 4,
   segmentDeliveryRate: 40,
@@ -810,8 +823,8 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
     additionalServiceUsageRate: "",
     additionalServiceUnitPrice: "",
     lineBlockRate: lineBenchmarkDefaults.blockRate,
-    friendRepeatConversionRate: lineBenchmarkDefaults.friendRepeatConversionRate,
-    directBookingShiftRate: lineBenchmarkDefaults.directBookingShiftRate,
+    friendRepeatConversionRate: "",
+    directBookingShiftRate: "",
     averageStayNights: lineBenchmarkDefaults.averageStayNights,
     monthlyBroadcastCount: lineBenchmarkDefaults.monthlyBroadcastCount,
     segmentDeliveryRate: lineBenchmarkDefaults.segmentDeliveryRate,
@@ -844,8 +857,8 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
     additionalServiceUsageRate: "",
     additionalServiceUnitPrice: "",
     lineBlockRate: lineBenchmarkDefaults.blockRate,
-    friendRepeatConversionRate: lineBenchmarkDefaults.friendRepeatConversionRate,
-    directBookingShiftRate: lineBenchmarkDefaults.directBookingShiftRate,
+    friendRepeatConversionRate: "",
+    directBookingShiftRate: "",
     averageStayNights: 1,
     monthlyBroadcastCount: lineBenchmarkDefaults.monthlyBroadcastCount,
     segmentDeliveryRate: lineBenchmarkDefaults.segmentDeliveryRate,
@@ -874,8 +887,8 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
     additionalServiceUsageRate: "",
     additionalServiceUnitPrice: "",
     lineBlockRate: lineBenchmarkDefaults.blockRate,
-    friendRepeatConversionRate: 10,
-    directBookingShiftRate: lineBenchmarkDefaults.directBookingShiftRate,
+    friendRepeatConversionRate: "",
+    directBookingShiftRate: "",
     averageStayNights: 1,
     monthlyBroadcastCount: lineBenchmarkDefaults.monthlyBroadcastCount,
     segmentDeliveryRate: lineBenchmarkDefaults.segmentDeliveryRate,
@@ -1086,7 +1099,7 @@ function getFriendRepeatConversionRate(inputs: SimulationInputs) {
   return getSimulationAssumptionValue(
     inputs,
     "friendRepeatConversionRate",
-    lineBenchmarkDefaults.friendRepeatConversionRate,
+    getLineGrowthCase(inputs).friendRepeatConversionRate,
   );
 }
 
@@ -1094,7 +1107,7 @@ function getDirectBookingShiftRate(inputs: SimulationInputs) {
   return getSimulationAssumptionValue(
     inputs,
     "directBookingShiftRate",
-    lineBenchmarkDefaults.directBookingShiftRate,
+    getLineGrowthCase(inputs).directBookingShiftRate,
   );
 }
 
@@ -1590,14 +1603,9 @@ function calculateSimulation(
   const unitPrice = getAverageUnitPrice(industry, inputs);
   const lineCase = getLineGrowthCase(inputs);
   const blockRate = getLineBlockRate(inputs) / 100;
-  const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs) / 100;
   const directBookingShiftRate = getDirectBookingShiftRate(inputs) / 100;
-  const averageStayNights = getAverageStayNightsForSimulation(inputs);
-  const externalCostPerUse = getExternalBookingCostPerUse(
-    industry,
-    inputs,
-    unitPrice,
-  );
+  const monthlyExternalBookingCost =
+    getAnnualOtaCommissionEstimate(industry, inputs) / 12;
   const lineFriendsAfterYear =
     monthlyCustomers * (lineCase.rate / 100) * 12 * (1 - blockRate);
   const funnel = lineFunnelByIndustry[industry];
@@ -1614,13 +1622,7 @@ function calculateSimulation(
     (Math.min(scenario.repeat, industry === "hotel" ? 10 : 15) / 100) *
     unitPrice *
     repeatRevenueAdjustmentFactor;
-  const additionalRepeatVisits = lineFriendsAfterYear * friendRepeatConversionRate;
-  const shiftedDirectReservations =
-    additionalRepeatVisits *
-    directBookingShiftRate *
-    (assumptions.feeReductionRate / 100);
-  const feeSaving =
-    (shiftedDirectReservations * averageStayNights * externalCostPerUse) / 12;
+  const feeSaving = monthlyExternalBookingCost * directBookingShiftRate;
   const additionalServiceImpact =
     assumptions.pricingPlan === "growth"
       ? getAdditionalServiceRevenue(industry, inputs)
@@ -1629,7 +1631,7 @@ function calculateSimulation(
   const vacantSlotImpact = lineImpact * 0.3;
   const revenueImprovement =
     repeatImpact + vacantSlotImpact + additionalServiceImpact;
-  const costImprovement = assumptions.pricingPlan === "growth" ? feeSaving : 0;
+  const costImprovement = feeSaving;
   const monthlyImpact = Math.max(
     revenueImprovement + costImprovement,
     0,
@@ -1705,9 +1707,7 @@ function buildProjectionRows(
   const lineCase = getLineGrowthCase(inputs);
   const lineRegistrationRate = lineCase.rate / 100;
   const blockRate = getLineBlockRate(inputs) / 100;
-  const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs) / 100;
   const directBookingShiftRate = getDirectBookingShiftRate(inputs) / 100;
-  const averageStayNights = getAverageStayNightsForSimulation(inputs);
   const monthlyBroadcastCount = getMonthlyBroadcastCount(inputs);
   const segmentDeliveryRate = getSegmentDeliveryRate(inputs) / 100;
   const funnel = lineFunnelByIndustry[industry];
@@ -1721,11 +1721,6 @@ function buildProjectionRows(
   const repeatImprovementTarget = Math.min(scenario.repeat, maxRepeatImprovement);
   const monthlyOtaCommission =
     (getAnnualOtaCommissionEstimate(industry, inputs) / 12);
-  const externalCostPerUse = getExternalBookingCostPerUse(
-    industry,
-    inputs,
-    currentUnitPrice,
-  );
   const monthlyAdditionalServiceRevenue =
     assumptions.pricingPlan === "growth"
       ? getAdditionalServiceRevenue(industry, inputs)
@@ -1761,28 +1756,14 @@ function buildProjectionRows(
       currentUnitPrice *
       repeatRevenueAdjustmentFactor;
     const repeatRevenue = lineRepeatReservationRevenue + repeatRateRevenue;
-    const feeReductionProgress = Math.min(
-      month / assumptions.feeReductionStartMonth,
-      1,
-    );
-    const effectiveFeeReductionRate =
-      (assumptions.feeReductionRate / 100) * feeReductionProgress;
-    const directIncrease = currentThirdPartyRatio * effectiveFeeReductionRate;
-    const additionalRepeatVisitsFromLine =
-      Math.max(lineFriends - currentLineFriends, 0) * friendRepeatConversionRate;
-    const shiftedDirectReservations =
-      additionalRepeatVisitsFromLine *
-      directBookingShiftRate *
-      effectiveFeeReductionRate;
-    const feeSaving = Math.min(
-      shiftedDirectReservations * averageStayNights * externalCostPerUse,
-      monthlyOtaCommission * effectiveFeeReductionRate,
-    );
+    const effectiveDirectShiftRate = directBookingShiftRate * ramp;
+    const directIncrease = currentThirdPartyRatio * effectiveDirectShiftRate;
+    const feeSaving = monthlyOtaCommission * effectiveDirectShiftRate;
     const salesImprovement =
       repeatRevenue +
       vacantSlotRevenue +
       monthlyAdditionalServiceRevenue;
-    const costImprovement = assumptions.pricingPlan === "growth" ? feeSaving : 0;
+    const costImprovement = feeSaving;
     const unitPriceIncreaseRevenue = monthlyAdditionalServiceRevenue;
     const monthlyDifference = Math.max(salesImprovement + costImprovement, 0);
     cumulativeDifference += monthlyDifference;
@@ -1840,9 +1821,9 @@ function buildProjectionRows(
       surveyRespondents: lineFriends * (lineCase.surveyResponseRate / 100),
       surveyUnanswered:
         lineFriends * (1 - lineCase.surveyResponseRate / 100),
-      classifiedCustomers: lineFriends * (lineCase.surveyResponseRate / 100) * 0.9,
+      classifiedCustomers: lineFriends * (lineCase.surveyResponseRate / 100),
       priorityCustomerCount:
-        lineFriends * (lineCase.surveyResponseRate / 100) * 0.9 * 0.45,
+        lineFriends * (lineCase.surveyResponseRate / 100) * 0.45,
       repeatRevenue,
       vacantSlotRevenue,
       feeSaving,
@@ -1875,8 +1856,6 @@ function buildBenchmarkComparison(
   industry: Industry,
   inputs: SimulationInputs,
   projectionRows: ProjectionRow[],
-  scenario: Record<ScenarioKey, number>,
-  assumptions: SimulationAssumptions,
 ): BenchmarkComparison {
   const labels = industryMessageLabels[industry];
   const roomCount = toNumber(inputs.roomCount);
@@ -1887,10 +1866,8 @@ function buildBenchmarkComparison(
   const commissionRate = getCommissionRate(industry, inputs) * 100;
   const lineCase = getLineGrowthCase(inputs);
   const blockRate = getLineBlockRate(inputs) / 100;
-  const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs) / 100;
   const directBookingShiftRate = getDirectBookingShiftRate(inputs) / 100;
-  const averageStayNights = getAverageStayNightsForSimulation(inputs);
-  const benchmarkLift = industry === "hotel" ? 1.15 : 1.1;
+  const benchmarkLift = industry === "hotel" ? 1.05 : 1;
   const monthlyGrossLineFriends =
     monthlyCustomers * (lineCase.rate / 100);
   const benchmarkMonthlyNetLineFriends =
@@ -1905,30 +1882,10 @@ function buildBenchmarkComparison(
       benchmarkDirectRatio: currentDirectRatio,
     },
     ...projectionRows.map((row) => {
-      const feeReductionProgress = Math.min(
-        row.month / assumptions.feeReductionStartMonth,
-        1,
-      );
       const benchmarkLineFriends =
         currentLineFriends + benchmarkMonthlyNetLineFriends * row.month;
-      const benchmarkNetNewFriends = Math.max(
-        benchmarkLineFriends - currentLineFriends,
-        0,
-      );
-      const benchmarkShiftedReservations =
-        benchmarkNetNewFriends *
-        friendRepeatConversionRate *
-        directBookingShiftRate *
-        (assumptions.feeReductionRate / 100) *
-        feeReductionProgress;
       const benchmarkDirectIncrease =
-        monthlyCustomers > 0
-          ? Math.min(
-              (benchmarkShiftedReservations * averageStayNights / monthlyCustomers) *
-                100,
-              thirdPartyRatio * (assumptions.feeReductionRate / 100) * feeReductionProgress,
-            )
-          : 0;
+        thirdPartyRatio * directBookingShiftRate * row.ramp;
 
       return {
         month: row.month,
@@ -1948,10 +1905,10 @@ function buildBenchmarkComparison(
       industry === "hotel"
         ? `同規模施設の参考推移：客室数${formatNumber(roomCount)}室前後・${labels.externalSiteLabel}比率${formatPercent(
             thirdPartyRatio,
-          )}・手数料率${formatPercent(commissionRate)}に近い仮想モデル`
+          )}・手数料率${formatPercent(commissionRate)}に近い仮想レンジの中央値です。実在施設の実績値ではありません。`
         : `同規模施設の参考推移：${labels.externalSiteLabel}比率${formatPercent(
             thirdPartyRatio,
-          )}・月間利用者数が近い仮想モデル`,
+          )}・月間利用者数が近い仮想レンジの中央値です。実在施設の実績値ではありません。`,
     points,
   };
 }
@@ -2162,9 +2119,9 @@ function buildSheetBlock(
           values: feeSavings,
           emphasis: "positive",
           format: "manYenDecimal",
-          detail: `${assumptions.feeReductionStartMonth}ヶ月目に${labels.externalSiteLabel}予約の${formatPercent(
-            assumptions.feeReductionRate,
-          )}を自社予約へ移行できた場合の試算です。LINE経由予約売上とは別で計算しています。`,
+          detail: `${labels.externalSiteLabel}予約の${formatPercent(
+            getDirectBookingShiftRate(inputs),
+          )}を12ヶ月目の自社予約移行目標とした試算です。LINE経由予約売上とは別で計算しています。`,
         },
         {
           section: "売上改善",
@@ -2387,10 +2344,8 @@ export default function EstimateSimulator({
         activeIndustry,
         inputs,
         projectionRows,
-        scenario,
-        activeAssumptions,
       ),
-    [activeIndustry, inputs, projectionRows, scenario, activeAssumptions],
+    [activeIndustry, inputs, projectionRows],
   );
   const sheetBlock = useMemo(
     () =>
@@ -2816,6 +2771,15 @@ export default function EstimateSimulator({
                 />
               </div>
             </section>
+
+            <ResultHeroSummary
+              industry={activeIndustry}
+              labels={activeLabels}
+              inputs={inputs}
+              currentProjection={currentProjection}
+              oneYearProjection={oneYearProjection}
+              monthlyOperationCost={activeAssumptions.monthlyOperationCost}
+            />
 
             <section className="border-b border-black/8 bg-white px-5 py-6">
               <p className="text-[11px] tracking-[0.18em] text-black/35">
@@ -4031,6 +3995,154 @@ function SalesTalkAssist({ title, children }: { title: string; children: ReactNo
   );
 }
 
+function ResultHeroSummary({
+  industry,
+  labels,
+  inputs,
+  currentProjection,
+  oneYearProjection,
+  monthlyOperationCost,
+}: {
+  industry: Industry;
+  labels: (typeof industryMessageLabels)[Industry];
+  inputs: SimulationInputs;
+  currentProjection: ReturnType<typeof buildCurrentProjection>;
+  oneYearProjection: ProjectionRow;
+  monthlyOperationCost: number;
+}) {
+  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
+  const lineCase = getLineGrowthCase(inputs);
+  const annualRepeatRevenue = oneYearProjection.repeatRevenue * 12;
+  const annualFeeSaving = oneYearProjection.feeSaving * 12;
+  const annualFeeSavingLow = annualFeeSaving * 0.7;
+  const annualFeeSavingHigh = annualFeeSaving * 1.3;
+  const annualInvestment = initialLineSetupCost + monthlyOperationCost * 12;
+  const breakEvenMonth =
+    oneYearProjection.cumulativeProfit >= 0
+      ? Math.max(1, Math.ceil(annualInvestment / Math.max(oneYearProjection.monthlyDifference, 1)))
+      : null;
+  const repeatDelta =
+    oneYearProjection.repeatRatio - currentProjection.repeatRatio;
+  const directDelta =
+    oneYearProjection.directRatio - currentProjection.directRatio;
+  const monthlyImpactOverCost =
+    oneYearProjection.monthlyDifference - monthlyOperationCost;
+
+  return (
+    <section className="border-b border-black/8 bg-white px-5 py-6">
+      <div className="flex flex-col gap-2 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-[11px] tracking-[0.18em] text-black/35">
+            改善サマリー
+          </p>
+          <h3 className="mt-2 text-lg font-medium">
+            12ヶ月後に何がどれだけ良くなるか
+          </h3>
+        </div>
+        <p className="text-xs leading-6 text-black/45">
+          参考値です。入力条件と説明用ベンチに基づく概算で、成果を保証するものではありません。
+        </p>
+      </div>
+
+      <div className="mt-5 grid gap-px bg-black/8 lg:grid-cols-3">
+        <HeroMetricCard
+          label="年間の追加売上"
+          before="¥0"
+          after={`${formatSignedApproxManYen(annualRepeatRevenue)}／年`}
+          description={`${getCustomerLabel(industry)}${formatNumber(monthlyCustomers)}人 × 登録${lineCase.rate.toFixed(1)}% × 再来訪率${formatPercent(getFriendRepeatConversionRate(inputs))}で試算`}
+          featured
+        />
+        <HeroMetricCard
+          label="LINE友だち数"
+          before={`${formatNumber(currentProjection.lineFriends)}人`}
+          after={`${formatNumber(oneYearProjection.lineFriends)}人`}
+          description={`登録後のブロック率${formatPercent(getLineBlockRate(inputs))}を控除したネット友だち数`}
+        />
+        <HeroMetricCard
+          label="12ヶ月の累計収支"
+          before={`投資 ${formatApproxManYen(annualInvestment)}`}
+          after={formatSignedApproxManYen(oneYearProjection.cumulativeProfit)}
+          description={
+            breakEvenMonth
+              ? `黒字化：${breakEvenMonth}ヶ月目の想定`
+              : "12ヶ月内は投資回収前の想定"
+          }
+        />
+      </div>
+
+      <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-4">
+        <KpiShift
+          label={labels.directRateLabel}
+          before={formatPercent(currentProjection.directRatio)}
+          after={formatPercent(oneYearProjection.directRatio)}
+          delta={`+${formatDecimalNumber(directDelta, 1)}ポイント`}
+          note={`${labels.externalSiteLabel}予約の${formatPercent(getDirectBookingShiftRate(inputs))}を12ヶ月目の移行目標に設定`}
+        />
+        <KpiShift
+          label="リピーター率"
+          before={formatPercent(currentProjection.repeatRatio)}
+          after={formatPercent(oneYearProjection.repeatRatio)}
+          delta={`+${formatDecimalNumber(repeatDelta, 1)}ポイント`}
+          note="LINE配信後の再来訪施策が段階的に効く想定"
+        />
+        <KpiShift
+          label={`${labels.externalSiteLabel}${getExternalCostLabel(industry)}削減`}
+          before="¥0"
+          after={`${formatApproxManYen(annualFeeSavingLow)}〜${formatApproxManYen(annualFeeSavingHigh)}／年`}
+          delta={formatSignedApproxManYen(annualFeeSaving)}
+          note="入力された外部予約比率と費用率から作成した仮想レンジ"
+        />
+        <KpiShift
+          label="月額運用費との比較"
+          before={formatApproxManYen(monthlyOperationCost)}
+          after={formatSignedApproxManYen(monthlyImpactOverCost)}
+          delta={monthlyImpactOverCost >= 0 ? "改善が上回る" : "立ち上げ中"}
+          note="12ヶ月目の月間改善額から月額運用費を差し引き"
+        />
+      </div>
+    </section>
+  );
+}
+
+function HeroMetricCard({
+  label,
+  before,
+  after,
+  description,
+  featured = false,
+}: {
+  label: string;
+  before: string;
+  after: string;
+  description: string;
+  featured?: boolean;
+}) {
+  return (
+    <article
+      className={[
+        "bg-white p-5",
+        featured ? "border-t-4 border-[#16a34a]" : "",
+      ].join(" ")}
+    >
+      <p className="text-xs font-medium text-black/45">{label}</p>
+      <div className="mt-3 flex flex-wrap items-baseline gap-2">
+        <span className="text-sm text-black/45">{before}</span>
+        <ArrowRight size={16} className="text-black/30" />
+        <span
+          className={
+            featured
+              ? "text-3xl font-semibold text-[#15803d]"
+              : "text-2xl font-semibold text-black/82"
+          }
+        >
+          {after}
+        </span>
+      </div>
+      <p className="mt-3 text-xs leading-6 text-black/45">{description}</p>
+    </article>
+  );
+}
+
 function CustomerFoundationCard({
   row,
   segments,
@@ -4040,12 +4152,17 @@ function CustomerFoundationCard({
   segments: { label: string; value: number }[];
   priorityTarget: string;
 }) {
+  const unclassifiedCustomers = Math.max(
+    row.lineFriends - row.classifiedCustomers,
+    0,
+  );
+
   return (
     <article className="border border-black/8 bg-white p-5">
       <p className="text-[11px] tracking-[0.18em] text-black/35">
         3. 12ヶ月後の顧客基盤
       </p>
-      <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-4">
+      <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-5">
         <CurrentMetricCard label="LINE友だち数" value={`${formatNumber(row.lineFriends)}人`} />
         <CurrentMetricCard label="アンケート回答者" value={`${formatNumber(row.surveyRespondents)}人`} />
         <CurrentMetricCard label="分類済み顧客数" value={`${formatNumber(row.classifiedCustomers)}人`} />
@@ -4054,6 +4171,7 @@ function CustomerFoundationCard({
           value={`${formatNumber(row.priorityCustomerCount)}人`}
           description={priorityTarget || "未選択"}
         />
+        <CurrentMetricCard label="未分類" value={`${formatNumber(unclassifiedCustomers)}人`} />
       </div>
       {segments.length ? (
         <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
@@ -4068,7 +4186,7 @@ function CustomerFoundationCard({
         </div>
       ) : null}
       <p className="mt-3 text-xs leading-6 text-black/45">
-        顧客分類ごとの人数は、入力された「増やしたい顧客層」を参考にしたシミュレーション値です。実績値ではありません。
+        アンケート回答率は有効友だちの12%で試算し、分類済み顧客数と未分類の合計がLINE友だち数に一致するようにしています。
       </p>
       <SalesTalkAssist title="商談トーク例：顧客分類">
         友だち数を増やすだけではなく、どのような目的で利用したお客様なのかを把握することで、顧客層ごとに合う案内を届けられます。
