@@ -116,7 +116,6 @@ type BenchmarkPoint = {
 
 type BenchmarkComparison = {
   profile: string;
-  basis: string[];
   points: BenchmarkPoint[];
 };
 
@@ -549,17 +548,6 @@ const golfBookingCostModelOptions: {
   },
 ];
 
-const reinvestmentOptions = [
-  "朝食内容の充実",
-  "客室備品やアメニティの改善",
-  "LINE登録特典",
-  "平日限定キャンペーン",
-  "広告費への再投資",
-  "スタッフの業務負担軽減",
-  "施設設備の改善",
-  "その他",
-];
-
 const lineGrowthCases: Record<
   LineGrowthCaseKey,
   { label: string; rate: number; surveyResponseRate: number; description: string }
@@ -911,6 +899,7 @@ const feeRateByIndustry: Record<Industry, number> = {
 const hotelAverageGuestsPerRoom = 1.5;
 const repeatRevenueAdjustmentFactor = 0.35;
 const initialLineSetupCost = 150000;
+const growthPlanImprovementMultiplier = 1.45;
 const pricingPlans: Record<
   PricingPlanKey,
   { label: string; monthlyOperationCost: number; description: string }
@@ -923,7 +912,7 @@ const pricingPlans: Record<
   growth: {
     label: "月額5万円プラン",
     monthlyOperationCost: 50000,
-    description: "配信改善や予約導線の運用を厚めに行う想定",
+    description: "登録導線・配信改善・自社予約導線まで運用する推奨プラン",
   },
 };
 const simulationDraftCollectionKey = "commoSimulationHistory";
@@ -1963,24 +1952,6 @@ function buildBenchmarkComparison(
         : `同規模施設の参考推移：${labels.externalSiteLabel}比率${formatPercent(
             thirdPartyRatio,
           )}・月間利用者数が近い仮想モデル`,
-    basis: [
-      "実在施設の実績値ではなく、入力条件をもとに作成した仮想比較モデルです",
-      `LINE友だち数は、${lineCase.label}${formatPercent(
-        lineCase.rate,
-      )}で追加された人数からブロック率${formatPercent(
-        blockRate * 100,
-      )}を控除し、同規模施設で導線整備がやや進んだケースとして${formatPercent(
-        (benchmarkLift - 1) * 100,
-      )}上振れさせています`,
-      `${labels.directRateLabel}は、ネット友だち数 × 再来訪率${formatPercent(
-        friendRepeatConversionRate * 100,
-      )} × 自社予約シフト率${formatPercent(
-        directBookingShiftRate * 100,
-      )} × 平均利用数${formatDecimalNumber(
-        averageStayNights,
-        1,
-      )}をもとに推定しています`,
-    ],
     points,
   };
 }
@@ -2261,7 +2232,8 @@ function buildPricingPlanSummaries(rows: ProjectionRow[]): PricingPlanSummary[] 
       const planMonthlyImprovement =
         key === "basic"
           ? row.repeatRevenue + row.vacantSlotRevenue
-          : row.salesImprovement + row.costImprovement;
+          : (row.salesImprovement + row.costImprovement) *
+            growthPlanImprovementMultiplier;
       cumulativeProfit += planMonthlyImprovement - monthlyCost;
 
       if (breakEvenMonth === null && cumulativeProfit >= 0) {
@@ -2509,7 +2481,6 @@ export default function EstimateSimulator({
     () => (oneYearProjection?.feeSaving || 0) * 12,
     [oneYearProjection?.feeSaving],
   );
-  const selectedReinvestments = getSelectedStrings(inputs, "reinvestmentItems");
   const monthlyLineFriendIncrease = projectionRows[0]?.monthlyNewLineFriends || 0;
   const shouldShowAggressiveNote = oneYearProjection?.isAggressive;
   const visibleIndustryOptions = industry
@@ -2668,7 +2639,7 @@ export default function EstimateSimulator({
         migrationRate: feeReductionRate,
         migrationTargetMonth: feeReductionStartMonth,
         feeSaving: annualMigratedFeeSaving,
-        reinvestmentItems: selectedReinvestments,
+        reinvestmentItems: [],
         recommendations: salesSummary.priorities,
         diagnosis: salesSummary.diagnosis,
         planSummaries: pricingPlanSummaries,
@@ -2987,27 +2958,6 @@ export default function EstimateSimulator({
                 segments={customerSegments}
                 priorityTarget={String(inputs.priorityTargetCustomer || "")}
               />
-              <LineMessagingCostCard
-                row={oneYearProjection}
-                inputs={inputs}
-                onInputChange={(key, value, isText) => {
-                  updateInput(key, value, isText);
-                  setIsSaved(false);
-                }}
-              />
-              <OtaMigrationCard
-                externalSiteLabel={activeLabels.externalSiteLabel}
-                externalCostLabel={getExternalCostLabel(activeIndustry)}
-                annualCommission={annualOtaCommission}
-                migrationRate={feeReductionRate}
-                targetMonth={feeReductionStartMonth}
-                annualSaving={annualMigratedFeeSaving}
-                reinvestments={selectedReinvestments}
-                onReinvestmentChange={(values) => {
-                  updateInput("reinvestmentItems", values);
-                  setIsSaved(false);
-                }}
-              />
               <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-4">
                 <KpiShift
                   label="LINE友だち数"
@@ -3090,17 +3040,6 @@ export default function EstimateSimulator({
                       </div>
                     ) : null}
                   </section>
-                  <div className="border-t border-black/8 bg-white px-5 py-3">
-                    <p className="text-xs leading-6 text-black/45">
-                      {getLineRegistrationBasis(activeIndustry, inputs)}
-                      LINE登録者のうち、月間で一定割合が配信やリッチメニュー経由で予約につながる想定です。
-                    </p>
-                  </div>
-                  <CalculationBasisBox
-                    industry={activeIndustry}
-                    inputs={inputs}
-                    assumptions={activeAssumptions}
-                  />
                   </div>
                 </div>
               ) : null}
@@ -3994,116 +3933,6 @@ function SpreadsheetBlock({
   );
 }
 
-function CalculationBasisBox({
-  industry,
-  inputs,
-  assumptions,
-}: {
-  industry: Industry;
-  inputs: SimulationInputs;
-  assumptions: SimulationAssumptions;
-}) {
-  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
-  const lineCase = getLineGrowthCase(inputs);
-  const funnel = lineFunnelByIndustry[industry];
-  const lineReservationRate =
-    funnel.activeFriendRate *
-    funnel.monthlyDeliveryTargetRate *
-    funnel.linkReactionRate *
-    funnel.reservationPageVisitRate *
-    funnel.bookingConversionRate *
-    100;
-  const customerLabel =
-    industry === "hotel"
-      ? "月間利用者数"
-      : industry === "golf"
-        ? "月間来場者数"
-        : "月間来店数";
-  const unitPriceLabel =
-    industry === "hotel"
-      ? "平均客室単価"
-      : industry === "golf"
-        ? "平均プレー料金"
-        : "平均客単価";
-  const labels = industryMessageLabels[industry];
-  const blockRate = getLineBlockRate(inputs);
-  const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs);
-  const directBookingShiftRate = getDirectBookingShiftRate(inputs);
-  const averageStayNights = getAverageStayNightsForSimulation(inputs);
-  const monthlyBroadcastCount = getMonthlyBroadcastCount(inputs);
-  const segmentDeliveryRate = getSegmentDeliveryRate(inputs);
-
-  return (
-    <section className="border-t border-black/8 bg-[#f7f8fa] px-5 py-5">
-      <div className="border border-black/8 bg-white px-4 py-4">
-        <h3 className="text-sm font-semibold text-black/75">
-          計算根拠について
-        </h3>
-        <div className="mt-3 space-y-3 text-xs leading-7 text-black/58">
-          <p>
-            本シミュレーションは、{customerLabel}・{unitPriceLabel}・{labels.externalSiteLabel}予約比率・リピーター率などの入力値をもとに、公式LINE導入後の改善可能性を試算したものです。
-          </p>
-          <p>
-            月間LINE友だち追加数は、{customerLabel}{formatNumber(
-              monthlyCustomers,
-            )}人の約{lineCase.rate.toFixed(
-              1,
-            )}%が{labels.lineRegistrationTouchpoints}などを通じてLINE登録し、ブロック率{formatPercent(
-              blockRate,
-            )}を控除したネット友だち数で試算しています。LINE経由予約は、累計友だち数のうち有効友だち、月間配信対象、リンク反応、予約ページ訪問、予約完了のファネルを通過する人数として試算しています。ファネル全体の仮定予約率は月間{lineReservationRate.toFixed(
-              1,
-            )}%です。
-          </p>
-          <p>
-            月間改善効果は、再来店による追加予約売上・空室や空き枠への送客売上・追加サービス売上を含む「売上改善」と、自社予約への移行による{getExternalCostLabel(
-              industry,
-            )}軽減・問い合わせ対応時間の削減を含む「コスト改善」に分けて算出しています。同じ予約売上を複数項目で重複計上しない前提です。
-          </p>
-          <p>
-            LINE公式アカウントの配信費用は、全員配信の場合「ネット友だち数 × 月間配信回数{formatDecimalNumber(
-              monthlyBroadcastCount,
-              1,
-            )}回」、セグメント配信の場合「ネット友だち数 × 月間配信回数 × 平均セグメント配信率{formatPercent(
-              segmentDeliveryRate,
-            )}」で通数を出し、無料通数の範囲に応じて必要プランを判定しています。
-          </p>
-          <p>
-            {labels.externalSiteLabel}
-            {getExternalCostLabel(industry)}軽減見込みは、ネット友だち数 × 友だちからの年間追加再来訪率{formatPercent(
-              friendRepeatConversionRate,
-            )} × 自社予約シフト率{formatPercent(
-              directBookingShiftRate,
-            )} × 平均利用数{formatDecimalNumber(
-              averageStayNights,
-              1,
-            )} × 1利用あたりの{getExternalCostDetailLabel(
-              industry,
-              inputs,
-            )}をベースに、{assumptions.feeReductionStartMonth}ヶ月目に{formatPercent(
-              assumptions.feeReductionRate,
-            )}の自社予約移行を目指す想定で段階的に計算しています。OTAそのものをなくす試算ではありません。
-          </p>
-          <p>
-            友だち追加導線やブロック率は公開事例・業界一般値を参考にした説明用の初期値です。一方、友だちからの再来訪率、自社予約シフト率、平均泊数・利用回数は施設ごとに変わる仮説値として、商談中に調整する前提です。
-          </p>
-          <p>
-            月間収支は、月間改善効果から月額運用費{formatManYenLabel(
-              assumptions.monthlyOperationCost,
-            )}を差し引いた金額です。累計収支は、初期設定費{formatManYenLabel(
-              initialLineSetupCost,
-            )}・月額運用費{formatManYenLabel(
-              assumptions.monthlyOperationCost,
-            )}を差し引いたうえで、導入から該当月までの収支を表示しています。
-          </p>
-          <p className="font-medium text-black/72">
-            本シミュレーションは、入力された条件と設定値に基づく概算です。実際の成果は、LINE登録導線、スタッフによる案内、配信内容、施設の魅力、季節、地域、顧客属性などによって変動します。表示される数値は成果を保証するものではありません。
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function CurrentMetricCard({
   label,
   value,
@@ -4248,141 +4077,6 @@ function CustomerFoundationCard({
   );
 }
 
-function LineMessagingCostCard({
-  row,
-  inputs,
-  onInputChange,
-}: {
-  row: ProjectionRow;
-  inputs: SimulationInputs;
-  onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
-}) {
-  const monthlyBroadcastCount = getMonthlyBroadcastCount(inputs);
-  const segmentDeliveryRate = getSegmentDeliveryRate(inputs);
-  const allPlan = calculateLineOfficialCost(row.allBroadcastMessages);
-  const segmentedPlan = calculateLineOfficialCost(row.segmentedBroadcastMessages);
-
-  return (
-    <article className="mt-4 border border-black/8 bg-white p-5">
-      <p className="text-[11px] tracking-[0.18em] text-black/35">
-        配信方法によるLINE公式アカウント費用
-      </p>
-      <div className="mt-4 grid gap-4 lg:grid-cols-[1fr_1.4fr]">
-        <div className="grid gap-3">
-          <HearingInput
-            field={{
-              key: "monthlyBroadcastCount",
-              label: "月間配信回数",
-              suffix: "回",
-              placeholder: `${lineBenchmarkDefaults.monthlyBroadcastCount}`,
-            }}
-            value={monthlyBroadcastCount}
-            onInputChange={onInputChange}
-          />
-          <HearingInput
-            field={{
-              key: "segmentDeliveryRate",
-              label: "平均セグメント配信率",
-              suffix: "%",
-              placeholder: `${lineBenchmarkDefaults.segmentDeliveryRate}`,
-            }}
-            value={segmentDeliveryRate}
-            onInputChange={onInputChange}
-          />
-          <p className="text-xs leading-6 text-black/50">
-            配信通数は「実際に送った人数」でカウントされます。同じ友だち数でも、全員配信かセグメント配信かで必要なLINE公式アカウントプランが変わります。
-          </p>
-        </div>
-        <div className="grid gap-px bg-black/8 md:grid-cols-3">
-          <CurrentMetricCard
-            label="全員配信の場合"
-            value={formatCurrency(row.allBroadcastCost)}
-            description={`${formatNumber(row.allBroadcastMessages)}通 / ${allPlan.planLabel}プラン`}
-          />
-          <CurrentMetricCard
-            label="セグメント配信の場合"
-            value={formatCurrency(row.segmentedBroadcastCost)}
-            description={`${formatNumber(row.segmentedBroadcastMessages)}通 / ${segmentedPlan.planLabel}プラン`}
-          />
-          <CurrentMetricCard
-            label="月間費用差"
-            value={formatCurrency(row.messageCostSaving)}
-            description="セグメント配信で抑えられるLINE公式アカウント費用の概算"
-            featured
-          />
-        </div>
-      </div>
-      <SalesTalkAssist title="商談トーク例：セグメント配信">
-        友だち数が増えるほど、全員に同じ内容を送る運用では通数とブロック率の両方が課題になります。利用目的や来訪タイミングで分けて送ることで、必要な人に必要な情報だけを届けながら、LINE公式アカウントの費用上昇も抑えられます。
-      </SalesTalkAssist>
-    </article>
-  );
-}
-
-function OtaMigrationCard({
-  externalSiteLabel,
-  externalCostLabel,
-  annualCommission,
-  migrationRate,
-  targetMonth,
-  annualSaving,
-  reinvestments,
-  onReinvestmentChange,
-}: {
-  externalSiteLabel: string;
-  externalCostLabel: string;
-  annualCommission: number;
-  migrationRate: number;
-  targetMonth: number;
-  annualSaving: number;
-  reinvestments: string[];
-  onReinvestmentChange: (values: string[]) => void;
-}) {
-  return (
-    <article className="border border-black/8 bg-white p-5">
-      <p className="text-[11px] tracking-[0.18em] text-black/35">
-        4. 自社予約移行シミュレーション
-      </p>
-      <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-4">
-        <CurrentMetricCard
-          label={`現在の年間${externalSiteLabel}${externalCostLabel}`}
-          value={formatCurrency(annualCommission)}
-          description={`年間 ${formatApproxManYen(annualCommission)}`}
-        />
-        <CurrentMetricCard
-          label="自社予約へ移行する割合"
-          value={`${migrationRate.toFixed(1)}%`}
-        />
-        <CurrentMetricCard label="自社予約化の目標期間" value={`${targetMonth}ヶ月`} />
-        <CurrentMetricCard
-          label={`軽減できる${externalCostLabel}`}
-          value={formatCurrency(annualSaving)}
-          description={`年間 ${formatApproxManYen(annualSaving)}`}
-          featured
-        />
-      </div>
-      <div className="mt-4 bg-[#f7f3ff] px-4 py-4 text-sm leading-7 text-[#4c1d95]">
-        <p>OTAそのものをなくす試算ではありません。</p>
-        <p className="mt-1">
-          新規集客には{externalSiteLabel}を活用しながら、再来訪するお客様の一部をLINEや公式サイトからの自社予約へ移行した場合の概算です。
-        </p>
-      </div>
-      <ToggleOptionGroup
-        title="この金額を、施設の何に活用しますか？"
-        options={reinvestmentOptions}
-        values={reinvestments}
-        onChange={onReinvestmentChange}
-      />
-      <p className="mt-4 text-sm font-medium text-black/72">
-        年間{formatCurrency(annualSaving)}の利益が残るとしたら、施設のどこに再投資したいですか？
-      </p>
-      <SalesTalkAssist title="商談トーク例：自社予約移行">
-        現在のOTA利用を否定する必要はありません。新規のお客様はOTAで獲得しながら、一度利用したお客様の一部だけでも次回はLINEや自社サイトから予約してもらえれば、年間でこれだけの金額が施設に残ります。
-      </SalesTalkAssist>
-    </article>
-  );
-}
-
 function ImprovementBreakdownCards({
   row,
   industry,
@@ -4518,7 +4212,7 @@ function PricingPlanComparison({
             8. 料金プラン比較
           </h3>
           <p className="mt-2 text-sm leading-7 text-black/55">
-            月額3万円と5万円のどちらで見るかを選べます。下の詳細表は選択中プランで再計算されます。
+            月額5万円プランは、登録導線・配信改善・自社予約導線まで運用する前提で、改善効果を高めて試算します。
           </p>
         </div>
         <p className="text-xs leading-6 text-black/45">
@@ -4545,6 +4239,11 @@ function PricingPlanComparison({
                 <span>
                   <span className="block text-sm font-medium text-black/78">
                     {summary.label}
+                    {summary.key === "growth" ? (
+                      <span className="ml-2 inline-flex border border-[#7c3aed]/25 bg-[#f7f3ff] px-2 py-0.5 text-[10px] font-semibold text-[#5b21b6]">
+                        推奨
+                      </span>
+                    ) : null}
                   </span>
                   <span className="mt-2 block text-xs leading-6 text-black/50">
                     {summary.description}
@@ -4593,11 +4292,6 @@ function PricingPlanComparison({
                     {formatSignedApproxManYen(summary.cumulativeProfit)}
                   </span>
                 </span>
-              </span>
-              <span className="mt-4 block text-xs leading-6 text-black/52">
-                {summary.breakEvenMonth
-                  ? `${summary.breakEvenMonth}ヶ月目に累計収支がプラスになる想定です。`
-                  : "12ヶ月以内には累計収支がプラスにならない想定です。"}
               </span>
             </button>
           );
@@ -4840,9 +4534,6 @@ function BenchmarkComparisonCard({
             {comparison.profile}
           </p>
         </div>
-        <p className="max-w-md text-xs leading-6 text-black/45">
-          実在施設の実績値ではありません。入力条件とシミュレーション設定から作成した、商談用の仮想比較です。
-        </p>
       </div>
       <div className="mt-4 grid gap-4 xl:grid-cols-2">
         <MiniLineChart
@@ -4860,14 +4551,6 @@ function BenchmarkComparisonCard({
           benchmarkKey="benchmarkDirectRatio"
         />
       </div>
-      <ul className="mt-4 grid gap-2 text-xs leading-6 text-black/52 md:grid-cols-3">
-        {comparison.basis.map((item) => (
-          <li key={item} className="flex gap-2">
-            <span className="mt-2 h-1.5 w-1.5 shrink-0 bg-[#7c3aed]" />
-            <span>{item}</span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
