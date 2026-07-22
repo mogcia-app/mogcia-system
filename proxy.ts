@@ -1,8 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 const authCookieName = "mogcia-auth";
-const publicPaths = new Set(["/", "/lp/toeihotel"]);
-const publicPrefixes = ["/_next/", "/lp/toeihotel/"];
+const publicPaths = new Set(["/", "/lp/toeihotel", "/lp/miyako"]);
+const publicPrefixes = ["/_next/", "/lp/toeihotel/", "/lp/miyako/"];
 const publicFiles = new Set([
   "/apple-icon.png",
   "/favicon.ico",

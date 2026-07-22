@@ -305,6 +305,57 @@ export const portfolioItems: PortfolioItem[] = [
     ],
   },
   {
+    slug: "kyoto-country-club-lp",
+    href: "/lp/miyako",
+    assetKey: "kyoto-country-club-lp",
+    galleryImages: [
+      "/lp/miyako/1.png",
+      "/lp/miyako/2.png",
+      "/lp/miyako/3.png",
+      "/lp/miyako/4.png",
+      "/lp/miyako/5.png",
+      "/lp/miyako/6.png",
+    ],
+    title: "京都カントリークラブ LP",
+    category: "LP",
+    colorTags: ["白", "緑", "ベージュ"],
+    designTags: ["Trust", "Minimal"],
+    sidebarTags: ["LP", "ゴルフ場", "自然", "信頼", "白", "緑"],
+    industry: "ゴルフ場",
+    mood: "自然 / 予約導線",
+    client: "京都カントリークラブ",
+    year: "2026",
+    catchCopy: "ゴルフ場の魅力と予約導線を1ページで伝える紹介LP。",
+    summary:
+      "コースの雰囲気、施設の魅力、予約につながる導線を整理し、初めて検討するユーザーにも利用イメージが伝わるように構成したランディングページです。",
+    role: ["Direction", "Design", "Frontend"],
+    tools: ["Next.js", "TailwindCSS", "Figma"],
+    accent: "from-[#edf5ec] via-[#fbfaf4] to-[#ffffff]",
+    metrics: [
+      { label: "Sections", value: "6" },
+      { label: "Goal", value: "Reservation" },
+      { label: "Device", value: "Responsive" },
+    ],
+    sections: [
+      {
+        title: "First View",
+        body:
+          "ゴルフ場の第一印象が伝わるビジュアルを大きく見せ、来場検討中のユーザーが予約や問い合わせへ進みやすい導線を設計しています。",
+      },
+      {
+        title: "Course Appeal",
+        body:
+          "コース、施設、利用シーンを整理し、ビジターにも会員候補にも魅力が伝わるよう、情報の見せ方にメリハリをつけています。",
+      },
+      {
+        title: "Conversion",
+        body:
+          "予約・問い合わせにつながる導線を各セクションに配置し、スマホ閲覧でも次の行動が取りやすい構成にしています。",
+      },
+    ],
+    thumbnailPath: "/lp/miyako/1.png",
+  },
+  {
     slug: "toeihotel-lp",
     href: "/lp/toeihotel",
     assetKey: "toeihotel-lp",

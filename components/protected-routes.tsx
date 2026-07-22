@@ -5,7 +5,7 @@ import { ReactNode } from "react";
 
 import AuthGuard from "@/components/auth-guard";
 
-const publicPaths = new Set(["/", "/lp/toeihotel"]);
+const publicPaths = new Set(["/", "/lp/toeihotel", "/lp/miyako"]);
 
 export default function ProtectedRoutes({ children }: { children: ReactNode }) {
   const pathname = usePathname();

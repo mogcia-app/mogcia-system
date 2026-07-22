@@ -25,6 +25,7 @@ type Industry = "hotel" | "golf" | "restaurant";
 type ScenarioKey = "repeat";
 type PricingPlanKey = "basic" | "growth";
 type LineGrowthCaseKey = "cautious" | "standard" | "aggressive";
+type GolfBookingCostModel = "commission" | "markup" | "mixed" | "unknown";
 type SimulationInputs = Record<string, string | number | string[]>;
 
 type EstimateSimulatorMode = "input" | "result";
@@ -353,7 +354,6 @@ const fieldsByIndustry: Record<Industry, FieldConfig[]> = {
     { key: "memberAverageUnitPrice", label: "メンバー平均プレー料金", suffix: "円" },
     { key: "visitorAverageUnitPrice", label: "ビジター平均プレー料金", suffix: "円" },
     { key: "thirdPartyRatio", label: "外部予約サイト比率", suffix: "%" },
-    { key: "commissionRate", label: "外部予約サイト手数料率", suffix: "%" },
     { key: "directRatio", label: "自社予約比率", suffix: "%" },
     { key: "phoneRatio", label: "電話予約比率", suffix: "%" },
     { key: "eventCount", label: "イベント数", suffix: "件/月" },
@@ -520,6 +520,33 @@ const lineChannelOptions = [
   "Instagram、SNSへの掲載",
   "レストラン、共有スペースへのPOP設置",
   "イベント、コンペ、団体利用時の案内",
+];
+
+const golfBookingCostModelOptions: {
+  value: GolfBookingCostModel;
+  label: string;
+  description: string;
+}[] = [
+  {
+    value: "commission",
+    label: "手数料が発生する",
+    description: "予約サイト経由売上に手数料率をかけて試算します。",
+  },
+  {
+    value: "markup",
+    label: "掲載時に料金を上乗せしている",
+    description: "自社予約単価と予約サイト掲載単価の差額で試算します。",
+  },
+  {
+    value: "mixed",
+    label: "両方ある",
+    description: "手数料と上乗せ差額を分けて合算します。",
+  },
+  {
+    value: "unknown",
+    label: "わからない",
+    description: "商談中に確認できるよう、両方の入力欄を表示します。",
+  },
 ];
 
 const reinvestmentOptions = [
@@ -809,7 +836,10 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
     memberAverageUnitPrice: "",
     visitorAverageUnitPrice: "",
     thirdPartyRatio: "",
+    bookingCostModel: "commission",
     commissionRate: "",
+    directPlayUnitPrice: "",
+    bookingSitePlayUnitPrice: "",
     directRatio: "",
     phoneRatio: "",
     eventCount: "",
@@ -1295,12 +1325,115 @@ function getCommissionRate(industry: Industry, inputs: SimulationInputs) {
     : feeRateByIndustry[industry];
 }
 
+function getGolfBookingCostModel(inputs: SimulationInputs): GolfBookingCostModel {
+  const value = String(inputs.bookingCostModel || "commission");
+
+  return value === "markup" || value === "mixed" || value === "unknown"
+    ? value
+    : "commission";
+}
+
+function includesGolfCommissionCost(inputs: SimulationInputs) {
+  const model = getGolfBookingCostModel(inputs);
+
+  return model === "commission" || model === "mixed" || model === "unknown";
+}
+
+function includesGolfMarkupCost(inputs: SimulationInputs) {
+  const model = getGolfBookingCostModel(inputs);
+
+  return model === "markup" || model === "mixed" || model === "unknown";
+}
+
+function getGolfDirectPlayUnitPrice(inputs: SimulationInputs) {
+  return (
+    toNumber(inputs.directPlayUnitPrice) ||
+    toNumber(inputs.visitorAverageUnitPrice) ||
+    toNumber(inputs.averageUnitPrice)
+  );
+}
+
+function getGolfBookingSitePlayUnitPrice(inputs: SimulationInputs) {
+  return (
+    toNumber(inputs.bookingSitePlayUnitPrice) ||
+    toNumber(inputs.visitorAverageUnitPrice) ||
+    toNumber(inputs.averageUnitPrice)
+  );
+}
+
+function getGolfBookingMarkupPerUse(inputs: SimulationInputs) {
+  return Math.max(
+    getGolfBookingSitePlayUnitPrice(inputs) - getGolfDirectPlayUnitPrice(inputs),
+    0,
+  );
+}
+
+function getExternalBookingCostPerUse(
+  industry: Industry,
+  inputs: SimulationInputs,
+  unitPrice: number,
+) {
+  if (industry !== "golf") {
+    return unitPrice * getCommissionRate(industry, inputs);
+  }
+
+  const commissionCost = includesGolfCommissionCost(inputs)
+    ? unitPrice * getCommissionRate(industry, inputs)
+    : 0;
+  const markupCost = includesGolfMarkupCost(inputs)
+    ? getGolfBookingMarkupPerUse(inputs)
+    : 0;
+
+  return commissionCost + markupCost;
+}
+
 function getAnnualOtaCommissionEstimate(industry: Industry, inputs: SimulationInputs) {
   const monthlySales = getMonthlySalesForCommission(industry, inputs);
   const thirdPartyRatio = Math.min(toNumber(inputs.thirdPartyRatio), 100) / 100;
-  const commissionRate = getCommissionRate(industry, inputs);
+  const unitPrice = getAverageUnitPrice(industry, inputs);
+  const commissionCost =
+    industry === "golf" && !includesGolfCommissionCost(inputs)
+      ? 0
+      : monthlySales * thirdPartyRatio * getCommissionRate(industry, inputs) * 12;
+  const markupCost =
+    industry === "golf" && includesGolfMarkupCost(inputs)
+      ? getMonthlyCustomers(industry, inputs) *
+        thirdPartyRatio *
+        getGolfBookingMarkupPerUse(inputs) *
+        12
+      : 0;
 
-  return monthlySales * thirdPartyRatio * commissionRate * 12;
+  if (industry === "golf") {
+    return commissionCost + markupCost;
+  }
+
+  return monthlySales * thirdPartyRatio * getExternalBookingCostPerUse(
+    industry,
+    inputs,
+    unitPrice,
+  ) / Math.max(unitPrice, 1) * 12;
+}
+
+function getExternalCostLabel(industry: Industry) {
+  return industry === "golf" ? "予約サイトコスト" : "手数料";
+}
+
+function getExternalCostDetailLabel(industry: Industry, inputs: SimulationInputs) {
+  if (industry !== "golf") {
+    return "手数料";
+  }
+
+  const model = getGolfBookingCostModel(inputs);
+
+  if (model === "commission") {
+    return "手数料";
+  }
+
+  if (model === "markup") {
+    return "掲載価格の上乗せ分";
+  }
+
+  return "手数料・掲載価格上乗せ分";
 }
 
 function getRatingLabel(score: number) {
@@ -1396,7 +1529,7 @@ function getOpportunityRatings(
         thirdPartyRatio,
       )}あり、年間${formatApproxManYen(
         annualOtaCommission,
-      )}の手数料が発生している試算です。`,
+      )}の${getExternalCostDetailLabel(industry, inputs)}が発生している試算です。`,
     },
     {
       label: "リピーター施策",
@@ -1466,12 +1599,16 @@ function calculateSimulation(
   const currentRevenue = getCurrentRevenue(industry, inputs);
   const monthlyCustomers = getMonthlyCustomers(industry, inputs);
   const unitPrice = getAverageUnitPrice(industry, inputs);
-  const commissionRate = getCommissionRate(industry, inputs);
   const lineCase = getLineGrowthCase(inputs);
   const blockRate = getLineBlockRate(inputs) / 100;
   const friendRepeatConversionRate = getFriendRepeatConversionRate(inputs) / 100;
   const directBookingShiftRate = getDirectBookingShiftRate(inputs) / 100;
   const averageStayNights = getAverageStayNightsForSimulation(inputs);
+  const externalCostPerUse = getExternalBookingCostPerUse(
+    industry,
+    inputs,
+    unitPrice,
+  );
   const lineFriendsAfterYear =
     monthlyCustomers * (lineCase.rate / 100) * 12 * (1 - blockRate);
   const funnel = lineFunnelByIndustry[industry];
@@ -1494,7 +1631,7 @@ function calculateSimulation(
     directBookingShiftRate *
     (assumptions.feeReductionRate / 100);
   const feeSaving =
-    (shiftedDirectReservations * averageStayNights * unitPrice * commissionRate) / 12;
+    (shiftedDirectReservations * averageStayNights * externalCostPerUse) / 12;
   const additionalServiceImpact =
     assumptions.pricingPlan === "growth"
       ? getAdditionalServiceRevenue(industry, inputs)
@@ -1576,7 +1713,6 @@ function buildProjectionRows(
   const currentDirectRatio = toNumber(inputs.directRatio);
   const currentThirdPartyRatio = toNumber(inputs.thirdPartyRatio);
   const currentUnitPrice = getAverageUnitPrice(industry, inputs);
-  const commissionRate = getCommissionRate(industry, inputs);
   const lineCase = getLineGrowthCase(inputs);
   const lineRegistrationRate = lineCase.rate / 100;
   const blockRate = getLineBlockRate(inputs) / 100;
@@ -1595,7 +1731,12 @@ function buildProjectionRows(
   const maxRepeatImprovement = industry === "hotel" ? 10 : 15;
   const repeatImprovementTarget = Math.min(scenario.repeat, maxRepeatImprovement);
   const monthlyOtaCommission =
-    result.currentRevenue * (currentThirdPartyRatio / 100) * commissionRate;
+    (getAnnualOtaCommissionEstimate(industry, inputs) / 12);
+  const externalCostPerUse = getExternalBookingCostPerUse(
+    industry,
+    inputs,
+    currentUnitPrice,
+  );
   const monthlyAdditionalServiceRevenue =
     assumptions.pricingPlan === "growth"
       ? getAdditionalServiceRevenue(industry, inputs)
@@ -1645,7 +1786,7 @@ function buildProjectionRows(
       directBookingShiftRate *
       effectiveFeeReductionRate;
     const feeSaving = Math.min(
-      shiftedDirectReservations * averageStayNights * currentUnitPrice * commissionRate,
+      shiftedDirectReservations * averageStayNights * externalCostPerUse,
       monthlyOtaCommission * effectiveFeeReductionRate,
     );
     const salesImprovement =
@@ -1899,7 +2040,9 @@ function buildSheetBlock(
           label: "月間改善効果",
           values: withLineRevenue,
           emphasis: "positive",
-          detail: "売上改善とコスト改善を合計した、その月単体の改善効果です。同じ予約を複数項目で重複計上しないよう、売上改善と手数料軽減を分けて計算しています。",
+          detail: `売上改善とコスト改善を合計した、その月単体の改善効果です。同じ予約を複数項目で重複計上しないよう、売上改善と${getExternalCostLabel(
+            industry,
+          )}軽減を分けて計算しています。`,
         },
         {
           section: "収益改善",
@@ -1913,7 +2056,9 @@ function buildSheetBlock(
           label: "コスト改善",
           values: costImprovements,
           emphasis: "positive",
-          detail: `${labels.externalSiteLabel}予約の一部を自社予約へ移行した場合の手数料軽減などを合計しています。`,
+          detail: `${labels.externalSiteLabel}予約の一部を自社予約へ移行した場合の${getExternalCostLabel(
+            industry,
+          )}軽減などを合計しています。`,
         },
         {
           section: "LINE友だち",
@@ -2042,7 +2187,7 @@ function buildSheetBlock(
         },
         {
           section: "コスト改善",
-          label: "自社予約への移行で軽減できる手数料",
+          label: `自社予約への移行で軽減できる${getExternalCostLabel(industry)}`,
           values: feeSavings,
           emphasis: "positive",
           format: "manYenDecimal",
@@ -2314,7 +2459,7 @@ export default function EstimateSimulator({
           "累計LINE友だち数",
           "月間収支",
           "累計収支",
-        ].includes(row.label) || row.label.includes("軽減できる手数料"),
+        ].includes(row.label) || row.label.includes("軽減できる"),
       ),
     [sheetBlock.rows],
   );
@@ -2347,7 +2492,7 @@ export default function EstimateSimulator({
           "初期設定費",
           "月額運用費",
           "月間支出",
-        ].includes(row.label) || row.label.includes("軽減できる手数料"),
+        ].includes(row.label) || row.label.includes("軽減できる"),
       ),
     [sheetBlock.rows],
   );
@@ -2711,10 +2856,10 @@ export default function EstimateSimulator({
                   value={formatPercent(toNumber(inputs.thirdPartyRatio))}
                 />
                 <CurrentMetricCard
-                  label={`年間${activeLabels.externalSiteLabel}手数料`}
+                  label={`年間${activeLabels.externalSiteLabel}${getExternalCostLabel(activeIndustry)}`}
                   value={formatApproxManYen(annualOtaCommission)}
                   status="改善余地あり"
-                  description={`公式LINEを通じて次回予約を${activeLabels.directDestination}へ誘導することで、この手数料負担の一部を施設側に残せる可能性があります。`}
+                  description={`公式LINEを通じて次回予約を${activeLabels.directDestination}へ誘導することで、この${getExternalCostLabel(activeIndustry)}の一部を施設側に残せる可能性があります。`}
                   featured
                 />
                 <CurrentMetricCard
@@ -2852,6 +2997,7 @@ export default function EstimateSimulator({
               />
               <OtaMigrationCard
                 externalSiteLabel={activeLabels.externalSiteLabel}
+                externalCostLabel={getExternalCostLabel(activeIndustry)}
                 annualCommission={annualOtaCommission}
                 migrationRate={feeReductionRate}
                 targetMonth={feeReductionStartMonth}
@@ -2894,7 +3040,10 @@ export default function EstimateSimulator({
                 />
               </div>
               <div className="mt-4">
-                <ImprovementBreakdownCards row={oneYearProjection} />
+                <ImprovementBreakdownCards
+                  row={oneYearProjection}
+                  industry={activeIndustry}
+                />
               </div>
               <div className="mt-4 bg-[#f7f3ff] px-4 py-4 text-xs leading-7 text-[#4c1d95]">
                 <p className="font-medium">この試算は保守的な条件です</p>
@@ -3555,8 +3704,105 @@ function GenericHearingForm({
           />
         );
       })}
+      {industry === "golf" ? (
+        <GolfBookingCostFields inputs={inputs} onInputChange={onInputChange} />
+      ) : null}
       <SubmitBlock isAnalyzing={isAnalyzing} onSubmit={onSubmit} />
     </div>
+  );
+}
+
+function GolfBookingCostFields({
+  inputs,
+  onInputChange,
+}: {
+  inputs: SimulationInputs;
+  onInputChange: (key: string, value: string | string[], isText?: boolean) => void;
+}) {
+  const model = getGolfBookingCostModel(inputs);
+  const showCommission = includesGolfCommissionCost(inputs);
+  const showMarkup = includesGolfMarkupCost(inputs);
+
+  return (
+    <section className="bg-white p-5 lg:col-span-3">
+      <p className="text-[11px] tracking-[0.16em] text-black/42">
+        予約サイトの費用形態
+      </p>
+      <p className="mt-2 text-xs leading-6 text-black/50">
+        ゴルフ場は予約サイトごとに、手数料型と掲載価格上乗せ型が混在するため、費用形態に合わせて試算します。
+      </p>
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {golfBookingCostModelOptions.map((option) => (
+          <label
+            key={option.value}
+            className={[
+              "min-h-24 border px-3 py-3 text-sm leading-6 transition",
+              model === option.value
+                ? "border-[#7c3aed] bg-[#7c3aed]/5"
+                : "border-black/10 hover:border-black/25",
+            ].join(" ")}
+          >
+            <span className="flex items-start gap-3">
+              <input
+                type="radio"
+                checked={model === option.value}
+                onChange={() =>
+                  onInputChange("bookingCostModel", option.value, true)
+                }
+                className="mt-1 h-4 w-4 accent-[#7c3aed]"
+              />
+              <span>
+                <span className="block font-medium">{option.label}</span>
+                <span className="mt-1 block text-xs text-black/50">
+                  {option.description}
+                </span>
+              </span>
+            </span>
+          </label>
+        ))}
+      </div>
+      <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-3">
+        {showCommission ? (
+          <HearingInput
+            field={{
+              key: "commissionRate",
+              label: "外部予約サイト手数料率",
+              suffix: "%",
+              placeholder: "例：8",
+              helpText: "手数料型の予約サイトがある場合の平均手数料率です。",
+            }}
+            value={inputs.commissionRate}
+            onInputChange={onInputChange}
+          />
+        ) : null}
+        {showMarkup ? (
+          <>
+            <HearingInput
+              field={{
+                key: "directPlayUnitPrice",
+                label: "公式・電話の平均プレー料金",
+                suffix: "円",
+                placeholder: "例：10,000",
+                helpText: "予約サイト上乗せ前の、自社予約側の平均単価です。",
+              }}
+              value={inputs.directPlayUnitPrice}
+              onInputChange={onInputChange}
+            />
+            <HearingInput
+              field={{
+                key: "bookingSitePlayUnitPrice",
+                label: "予約サイト掲載時の平均プレー料金",
+                suffix: "円",
+                placeholder: "例：11,000",
+                helpText: "予約サイト掲載時にお客様へ提示している平均単価です。",
+              }}
+              value={inputs.bookingSitePlayUnitPrice}
+              onInputChange={onInputChange}
+            />
+          </>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -3809,7 +4055,9 @@ function CalculationBasisBox({
             )}%です。
           </p>
           <p>
-            月間改善効果は、再来店による追加予約売上・空室や空き枠への送客売上・追加サービス売上を含む「売上改善」と、自社予約への移行による手数料軽減・問い合わせ対応時間の削減を含む「コスト改善」に分けて算出しています。同じ予約売上を複数項目で重複計上しない前提です。
+            月間改善効果は、再来店による追加予約売上・空室や空き枠への送客売上・追加サービス売上を含む「売上改善」と、自社予約への移行による{getExternalCostLabel(
+              industry,
+            )}軽減・問い合わせ対応時間の削減を含む「コスト改善」に分けて算出しています。同じ予約売上を複数項目で重複計上しない前提です。
           </p>
           <p>
             LINE公式アカウントの配信費用は、全員配信の場合「ネット友だち数 × 月間配信回数{formatDecimalNumber(
@@ -3820,14 +4068,18 @@ function CalculationBasisBox({
             )}」で通数を出し、無料通数の範囲に応じて必要プランを判定しています。
           </p>
           <p>
-            {labels.externalSiteLabel}手数料軽減見込みは、ネット友だち数 × 友だちからの年間追加再来訪率{formatPercent(
+            {labels.externalSiteLabel}
+            {getExternalCostLabel(industry)}軽減見込みは、ネット友だち数 × 友だちからの年間追加再来訪率{formatPercent(
               friendRepeatConversionRate,
             )} × 自社予約シフト率{formatPercent(
               directBookingShiftRate,
             )} × 平均利用数{formatDecimalNumber(
               averageStayNights,
               1,
-            )} × {unitPriceLabel} × 手数料率をベースに、{assumptions.feeReductionStartMonth}ヶ月目に{formatPercent(
+            )} × 1利用あたりの{getExternalCostDetailLabel(
+              industry,
+              inputs,
+            )}をベースに、{assumptions.feeReductionStartMonth}ヶ月目に{formatPercent(
               assumptions.feeReductionRate,
             )}の自社予約移行を目指す想定で段階的に計算しています。OTAそのものをなくす試算ではありません。
           </p>
@@ -4069,6 +4321,7 @@ function LineMessagingCostCard({
 
 function OtaMigrationCard({
   externalSiteLabel,
+  externalCostLabel,
   annualCommission,
   migrationRate,
   targetMonth,
@@ -4077,6 +4330,7 @@ function OtaMigrationCard({
   onReinvestmentChange,
 }: {
   externalSiteLabel: string;
+  externalCostLabel: string;
   annualCommission: number;
   migrationRate: number;
   targetMonth: number;
@@ -4091,7 +4345,7 @@ function OtaMigrationCard({
       </p>
       <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-4">
         <CurrentMetricCard
-          label={`現在の年間${externalSiteLabel}手数料`}
+          label={`現在の年間${externalSiteLabel}${externalCostLabel}`}
           value={formatCurrency(annualCommission)}
           description={`年間 ${formatApproxManYen(annualCommission)}`}
         />
@@ -4101,7 +4355,7 @@ function OtaMigrationCard({
         />
         <CurrentMetricCard label="自社予約化の目標期間" value={`${targetMonth}ヶ月`} />
         <CurrentMetricCard
-          label="軽減できる手数料"
+          label={`軽減できる${externalCostLabel}`}
           value={formatCurrency(annualSaving)}
           description={`年間 ${formatApproxManYen(annualSaving)}`}
           featured
@@ -4129,7 +4383,13 @@ function OtaMigrationCard({
   );
 }
 
-function ImprovementBreakdownCards({ row }: { row: ProjectionRow }) {
+function ImprovementBreakdownCards({
+  row,
+  industry,
+}: {
+  row: ProjectionRow;
+  industry: Industry;
+}) {
   return (
     <div className="grid gap-px bg-black/8 lg:grid-cols-2">
       <article className="bg-white p-5">
@@ -4147,7 +4407,10 @@ function ImprovementBreakdownCards({ row }: { row: ProjectionRow }) {
           6. コスト改善シミュレーション
         </p>
         <div className="mt-4 grid gap-3">
-          <CurrentMetricCard label="自社予約への移行による手数料軽減" value={formatCurrency(row.feeSaving)} />
+          <CurrentMetricCard
+            label={`自社予約への移行による${getExternalCostLabel(industry)}軽減`}
+            value={formatCurrency(row.feeSaving)}
+          />
           <CurrentMetricCard label="電話・問い合わせ対応時間の削減" value={formatCurrency(0)} description="現時点では定量化せず、改善項目として表示しています。" />
         </div>
       </article>
