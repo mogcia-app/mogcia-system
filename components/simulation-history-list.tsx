@@ -1,5 +1,6 @@
 "use client";
 
+import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
   deleteDoc,
@@ -41,6 +42,7 @@ type SavedSimulation = {
   isDraft?: boolean;
   id: string;
   savedAt: string;
+  industry?: string;
   industryLabel: string;
   facilityName: string;
   result: {
@@ -63,6 +65,9 @@ const formatNumber = (value: number) =>
   new Intl.NumberFormat("ja-JP", {
     maximumFractionDigits: 0,
   }).format(Math.round(value));
+
+const firebaseUnavailableMessage =
+  "Firebaseの公開環境変数が設定されていないため、保存済みシミュレーションを読み込めません。";
 
 const formatDateTime = (value: string) => {
   const date = new Date(value);
@@ -97,10 +102,18 @@ function getLastValueByLabels(savedSimulation: SavedSimulation, labels: string[]
   return 0;
 }
 
+function formatMonths(value: number) {
+  if (value <= 0) {
+    return "-";
+  }
+
+  return `${formatNumber(value)}ヶ月`;
+}
+
 export default function SimulationHistoryList() {
   const [history, setHistory] = useState<SavedSimulation[]>([]);
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [error, setError] = useState("");
+  const [isLoaded, setIsLoaded] = useState(!firebaseAuth);
+  const [error, setError] = useState(firebaseAuth ? "" : firebaseUnavailableMessage);
 
   useEffect(() => {
     let isMounted = true;
@@ -108,7 +121,11 @@ export default function SimulationHistoryList() {
     const loadFirestoreHistory = async (uid: string) => {
       try {
         if (!firebaseDb) {
+          if (!isMounted) {
+            return;
+          }
           setHistory([]);
+          setError(firebaseUnavailableMessage);
           setIsLoaded(true);
           return;
         }
@@ -147,20 +164,28 @@ export default function SimulationHistoryList() {
       }
     };
 
-    if (firebaseDb && firebaseAuth?.currentUser) {
-      void loadFirestoreHistory(firebaseAuth.currentUser.uid);
-    } else {
-      window.setTimeout(() => {
+    if (!firebaseAuth) {
+      return () => {
+        isMounted = false;
+      };
+    }
+
+    const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+      if (!user) {
         if (!isMounted) {
           return;
         }
         setHistory([]);
         setIsLoaded(true);
-      }, 0);
-    }
+        return;
+      }
+
+      void loadFirestoreHistory(user.uid);
+    });
 
     return () => {
       isMounted = false;
+      unsubscribe();
     };
   }, []);
 
@@ -247,12 +272,15 @@ export default function SimulationHistoryList() {
           const cumulativeProfit = getLastValueByLabels(savedSimulation, [
             "累計収支",
           ]);
-          const estimatedReservations = getLastValueByLabels(savedSimulation, [
-            "LINE経由の月間予約見込み",
-            "LINE経由予約見込み",
+          const commissionSaving = getLastValueByLabels(savedSimulation, [
+            "OTA手数料削減額",
+            "自社予約への移行で軽減できる手数料",
           ]);
-          const lineFriends = getLastValue(savedSimulation, "累計登録者数");
-          const deliveryCount = getLastValue(savedSimulation, "月間配信回数");
+          const repeatRevenueIncrease = getLastValueByLabels(savedSimulation, [
+            "リピーター増収額",
+            "再来訪による純増売上",
+          ]);
+          const paybackMonths = getLastValue(savedSimulation, "投資回収期間");
 
           return (
             <article
@@ -272,14 +300,22 @@ export default function SimulationHistoryList() {
                     {savedSimulation.industryLabel}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => deleteSimulation(savedSimulation.id)}
-                  className="inline-flex h-10 items-center justify-center gap-2 border border-black/12 px-4 text-sm font-medium text-black/55 transition hover:border-red-200 hover:text-red-600 lg:self-start"
-                >
-                  <Trash2 size={16} />
-                  削除
-                </button>
+                <div className="flex flex-col gap-2 sm:flex-row lg:self-start">
+                  <Link
+                    href={`/simulation/commo/result?id=${savedSimulation.id}`}
+                    className="inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
+                  >
+                    開く
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => deleteSimulation(savedSimulation.id)}
+                    className="inline-flex h-10 items-center justify-center gap-2 border border-black/12 px-4 text-sm font-medium text-black/55 transition hover:border-red-200 hover:text-red-600"
+                  >
+                    <Trash2 size={16} />
+                    削除
+                  </button>
+                </div>
               </div>
 
               <div className="grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-4">
@@ -288,18 +324,24 @@ export default function SimulationHistoryList() {
                   value={formatYen(savedSimulation.result.currentRevenue)}
                 />
                 <HistoryMetric
-                  label="12ヶ月累計収支"
+                  label="年間効果額"
+                  value={formatYen(savedSimulation.result.annualImpact)}
+                />
+                <HistoryMetric
+                  label="OTA手数料削減額"
+                  value={formatYen(commissionSaving)}
+                />
+                <HistoryMetric
+                  label="リピーター増収額"
+                  value={formatYen(repeatRevenueIncrease)}
+                />
+                <HistoryMetric
+                  label="年間収支"
                   value={formatYen(cumulativeProfit)}
                 />
                 <HistoryMetric
-                  label="12ヶ月目のLINE予約見込み"
-                  value={`${formatNumber(estimatedReservations)}件`}
-                />
-                <HistoryMetric
-                  label="12ヶ月目の配信回数・友だち数"
-                  value={`${formatNumber(deliveryCount)}回 / ${formatNumber(
-                    lineFriends,
-                  )}人`}
+                  label="投資回収期間"
+                  value={formatMonths(paybackMonths)}
                 />
               </div>
 
