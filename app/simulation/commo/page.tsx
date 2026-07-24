@@ -2,6 +2,7 @@ import { ArrowRight, MessageCircle, ShieldCheck } from "lucide-react";
 import Link from "next/link";
 
 import EstimateSimulator from "@/components/estimate-simulator";
+import FavoriteButton from "@/components/favorite-button";
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
 
@@ -23,6 +24,16 @@ export default function CommoSimulationPage() {
             </div>
 
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <FavoriteButton
+                item={{
+                  type: "simulation",
+                  title: "公式LINE導入シミュレーション",
+                  href: "/simulation/commo",
+                  description:
+                    "公式LINE導入後の友だち追加・顧客分類・再来訪・自社予約移行を試算します。",
+                  category: "commo.",
+                }}
+              />
               <Link
                 href="/simulation/commo/mini"
                 className="group inline-flex w-fit items-center gap-2 rounded-full border border-[#7c3aed]/20 bg-[#7c3aed]/8 px-5 py-3 text-sm font-medium text-[#5b21b6] shadow-none transition hover:-translate-y-0.5 hover:bg-[#7c3aed] hover:text-white"

@@ -65,7 +65,7 @@ export default function LoginForm() {
       );
       await signInWithEmailAndPassword(firebaseAuth, email, password);
       saveAuthCookie(remember);
-      router.push("/home");
+      router.push("/dashboard");
     } catch (caughtError) {
       setError(getAuthErrorMessage(caughtError));
     } finally {

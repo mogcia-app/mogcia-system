@@ -16,6 +16,7 @@ type PortfolioListPageProps = {
   filterLabel?: string;
   heroImagePath?: string;
   showPortfolioGrid?: boolean;
+  showIntro?: boolean;
   children?: ReactNode;
 };
 
@@ -29,6 +30,7 @@ export default function PortfolioListPage({
   filterLabel,
   heroImagePath,
   showPortfolioGrid = true,
+  showIntro = true,
   children,
 }: PortfolioListPageProps) {
   return (
@@ -52,17 +54,19 @@ export default function PortfolioListPage({
           </section>
         ) : null}
 
-        <section className="grid gap-8 border-b border-black/8 pb-10 lg:grid-cols-[180px_1fr] lg:gap-12">
-          <p className="text-sm tracking-[0.18em] text-black/35">{eyebrow}</p>
-          <div>
-            <h1 className="text-3xl leading-tight font-medium sm:text-4xl">
-              {title}
-            </h1>
-            <p className="mt-4 max-w-3xl text-sm leading-7 text-black/65 sm:text-base">
-              {description}
-            </p>
-          </div>
-        </section>
+        {showIntro ? (
+          <section className="grid gap-8 border-b border-black/8 pb-10 lg:grid-cols-[180px_1fr] lg:gap-12">
+            <p className="text-sm tracking-[0.18em] text-black/35">{eyebrow}</p>
+            <div>
+              <h1 className="text-3xl leading-tight font-medium sm:text-4xl">
+                {title}
+              </h1>
+              <p className="mt-4 max-w-3xl text-sm leading-7 text-black/65 sm:text-base">
+                {description}
+              </p>
+            </div>
+          </section>
+        ) : null}
 
         {showPortfolioGrid ? (
           category ? (

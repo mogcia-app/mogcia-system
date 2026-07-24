@@ -5,7 +5,12 @@ import { lpTemplates } from "@/components/portfolio/lp/templates";
 import { portfolioItems } from "@/lib/portfolio-data";
 
 export default function LpPage() {
-  const lpItems = portfolioItems.filter((item) => item.category === "LP");
+  const lpItems = portfolioItems.filter(
+    (item) =>
+      item.category === "LP" &&
+      item.href !== "/lp/miyako" &&
+      item.href !== "/lp/toeihotel",
+  );
 
   return (
     <PortfolioListPage
@@ -16,6 +21,7 @@ export default function LpPage() {
       items={lpItems}
       category="LP"
       heroImagePath="/lpmog.png"
+      showIntro={false}
     >
       <section className="grid gap-8 border-t border-black/8 pt-12 lg:grid-cols-[180px_1fr] lg:gap-12">
           <p className="text-sm tracking-[0.18em] text-black/35">

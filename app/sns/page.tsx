@@ -15,6 +15,7 @@ export default function SnsPage() {
       category="SNS"
       heroImagePath="/snsmog.png"
       showPortfolioGrid={false}
+      showIntro={false}
     >
       <section className="grid gap-8 lg:grid-cols-[180px_1fr] lg:gap-12">
         <div>

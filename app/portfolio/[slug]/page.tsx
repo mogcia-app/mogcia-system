@@ -2,6 +2,7 @@ import Image from "next/image";
 import { notFound } from "next/navigation";
 
 import ContactSection from "@/components/contact-section";
+import FavoriteButton from "@/components/favorite-button";
 import GalleryStrip from "@/components/gallery-strip";
 import PortfolioDetailSidebar from "@/components/portfolio-detail-sidebar";
 import PreviewToggle from "@/components/preview-toggle";
@@ -50,11 +51,25 @@ export default async function PortfolioDetailPage({
 
         <div className="space-y-12">
           <section className="space-y-5">
-            <div>
-              <p className="text-xs tracking-[0.18em] text-black/35">
-                INDUSTRY
-              </p>
-              <h2 className="mt-2 text-2xl font-semibold">{item.industry}</h2>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-xs tracking-[0.18em] text-black/35">
+                  {item.category} / {item.industry}
+                </p>
+                <h1 className="mt-2 text-3xl font-semibold tracking-[-0.03em]">
+                  {item.title}
+                </h1>
+              </div>
+              <FavoriteButton
+                item={{
+                  type: "portfolio",
+                  title: item.title,
+                  href: `/portfolio/${item.slug}`,
+                  description: item.summary,
+                  thumbnail: item.galleryImages?.[0] ?? item.thumbnailPath,
+                  category: item.category,
+                }}
+              />
             </div>
 
             <div className="relative">

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { notFound } from "next/navigation";
 
+import FavoriteButton from "@/components/favorite-button";
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
 import { ButtonLink } from "@/components/ui/button";
@@ -65,6 +66,16 @@ export default async function YoyakuTemplateDetailPage({
           <ButtonLink href="/portfolio/yoyaku" variant="outline">
             他のUIを見る
           </ButtonLink>
+          <FavoriteButton
+            item={{
+              type: "demo",
+              title: template.name,
+              href: `/portfolio/yoyaku/${template.id}`,
+              description: template.description,
+              thumbnail: template.imageSrc,
+              category: "予約UI",
+            }}
+          />
         </section>
 
         <YoyakuCustomizer template={template} />

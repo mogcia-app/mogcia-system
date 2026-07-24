@@ -188,23 +188,6 @@ export default function ReservationPage() {
             </Link>
           </div>
         </section>
-
-        <section className="grid gap-8 py-4 lg:grid-cols-[1fr_auto] lg:items-end">
-          <div className="space-y-3">
-            <p className="text-[11px] tracking-[0.24em] text-black/45">
-              CONTACT
-            </p>
-            <h2 className="text-2xl font-light tracking-[-0.03em] sm:text-3xl">
-              予約につながる流れから一緒に整理します。
-            </h2>
-          </div>
-          <Link
-            href="/works"
-            className="inline-flex border border-black/10 px-5 py-3 text-sm text-black transition hover:bg-black hover:text-white"
-          >
-            作品一覧を見る
-          </Link>
-        </section>
       </section>
 
       <SiteFooter />

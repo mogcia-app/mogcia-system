@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import FavoriteButton from "@/components/favorite-button";
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
 
@@ -350,6 +351,18 @@ function HeroSection() {
           ホームページ全体ではなく、&quot;今届けたい情報&quot;だけを
           スマートフォンで見やすくまとめたページです。
         </p>
+        <div className="mt-6">
+          <FavoriteButton
+            item={{
+              type: "demo",
+              title: "LINEミニページ",
+              href: "/simulation/commo/mini",
+              description:
+                "LINE配信から開く提案用ミニページのスマホデモです。",
+              category: "commo.",
+            }}
+          />
+        </div>
       </div>
     </section>
   );
@@ -535,7 +548,7 @@ function MiniPageContentView({ demo }: { demo: MiniPageDemo }) {
       </div>
 
       <div className="mt-5 space-y-4">
-        {content.sections.map((section, index) => (
+        {content.sections.map((section) => (
           <section
             key={section.label}
             className={[
@@ -543,7 +556,7 @@ function MiniPageContentView({ demo }: { demo: MiniPageDemo }) {
               demo.id % 3 === 0 ? "p-0" : "p-5",
             ].join(" ")}
           >
-            <MiniSectionContent demo={demo} section={section} index={index} />
+            <MiniSectionContent demo={demo} section={section} />
           </section>
         ))}
       </div>
@@ -641,11 +654,9 @@ function MiniPageHero({
 function MiniSectionContent({
   demo,
   section,
-  index,
 }: {
   demo: MiniPageDemo;
   section: MiniPageSection;
-  index: number;
 }) {
   if (demo.id % 3 === 0) {
     return (

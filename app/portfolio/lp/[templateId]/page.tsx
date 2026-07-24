@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { notFound } from "next/navigation";
 
+import FavoriteButton from "@/components/favorite-button";
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
 import { LpCustomizer } from "@/components/portfolio/lp/lp-customizer";
@@ -62,6 +63,15 @@ export default async function LpTemplateDetailPage({
           <ButtonLink href="/portfolio/lp" variant="outline">
             他のUIを見る
           </ButtonLink>
+          <FavoriteButton
+            item={{
+              type: "demo",
+              title: template.name,
+              href: `/portfolio/lp/${template.id}`,
+              description: template.description,
+              category: "LP UI",
+            }}
+          />
         </section>
 
         <LpCustomizer template={template} />

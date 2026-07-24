@@ -6,6 +6,7 @@ import {
 import Link from "next/link";
 
 import CommoCaseLibrary from "@/components/commo-case-tabs";
+import FavoriteButton from "@/components/favorite-button";
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
 import caseData from "@/lib/commo-case-data.json";
@@ -40,6 +41,16 @@ export default function CommoCasesPage() {
                   {item}
                 </span>
               ))}
+              <FavoriteButton
+                item={{
+                  type: "page",
+                  title: "匿名成功事例",
+                  href: "/simulation/commo/cases",
+                  description:
+                    "公式LINE活用事例を業種や課題から探せる営業用ライブラリです。",
+                  category: "Case",
+                }}
+              />
             </div>
           </div>
         </section>
