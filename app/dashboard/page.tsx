@@ -14,38 +14,47 @@ import type { FavoriteInput } from "@/lib/firebase-favorites";
 const products = [
   {
     title: "commo.",
-    initial: "c",
+    name: "commo",
+    logo: "/commo.logo.png",
+    dotColor: "#7c3aed",
     category: "Official LINE",
     description: "公式LINEを活用した顧客育成・予約導線支援",
-    href: "/simulation/commo",
+    href: "/commo",
   },
   {
     title: "selmo.",
-    initial: "s",
+    name: "selmo",
+    logo: "/sechat.png",
+    dotColor: "#facc15",
     category: "Sales",
     description: "営業導線や提案ページを整理するプロダクト枠",
-    href: "/dashboard",
+    href: "/selmo",
   },
   {
     title: "Roomly.",
-    initial: "R",
+    name: "Roomly",
+    logo: "/roomly.png",
+    dotColor: "#7f1d1d",
     category: "Hospitality",
     description: "宿泊・客室まわりの提案に使うプロダクト枠",
-    href: "/reservation",
+    href: "/roomly",
   },
   {
     title: "Signal.",
-    initial: "S",
+    name: "Signal",
+    logo: "/signal.png",
+    dotColor: "#f97316",
     category: "SNS",
     description: "SNS運用・クリエイティブ提案に使うプロダクト枠",
-    href: "/sns",
+    href: "/signal",
   },
   {
     title: "upmo",
-    initial: "u",
+    name: "upmo",
+    logo: "/upmologo.png",
     category: "Web",
     description: "HP・LP改善と制作提案に使うプロダクト枠",
-    href: "/hp",
+    href: "/upmo",
   },
 ] as const;
 
@@ -134,23 +143,42 @@ export default function DashboardPage() {
           </div>
           <div className="grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-3">
             {products.map((product) => (
-              <article key={product.title} className="group bg-white p-5">
-                <div className="flex items-start justify-between gap-4">
-                  <Link href={product.href} className="min-w-0 flex-1">
+              <article
+                key={product.title}
+                className="group relative bg-white transition hover:bg-[#fbfbfc]"
+              >
+                <Link
+                  href={product.href}
+                  aria-label={`${product.title}へ移動`}
+                  className="block p-5 pr-16"
+                >
+                  <div className="min-w-0">
                     <div className="flex items-center gap-4">
-                      <span className="flex h-12 w-12 shrink-0 items-center justify-center border border-black/10 bg-[#f7f7f8] text-lg font-medium text-black/50 transition group-hover:border-black/20 group-hover:text-black">
-                        {product.initial}
+                      <span className="flex h-14 w-14 shrink-0 items-center justify-center border border-black/10 bg-white transition group-hover:border-black/20">
+                        <img
+                          src={product.logo}
+                          alt={`${product.title} logo`}
+                          className="h-11 w-11 object-contain"
+                        />
                       </span>
                       <span className="min-w-0">
                         <span className="block text-[11px] tracking-[0.18em] text-black/35">
                           {product.category}
                         </span>
-                        <span className="mt-2 block text-2xl font-medium tracking-[-0.03em] transition group-hover:text-[#5b21b6]">
-                          {product.title}
+                        <span className="mt-2 block text-[1.7rem] font-light tracking-normal text-black/82 transition group-hover:text-[#5b21b6]">
+                          {product.name}
+                          {"dotColor" in product ? (
+                            <span style={{ color: product.dotColor }}>.</span>
+                          ) : null}
                         </span>
                       </span>
                     </div>
-                  </Link>
+                  </div>
+                  <p className="mt-4 min-h-[56px] text-sm leading-7 text-black/58">
+                    {product.description}
+                  </p>
+                </Link>
+                <div className="absolute right-5 top-5 z-10">
                   <FavoriteButton
                     compact
                     item={{
@@ -162,11 +190,6 @@ export default function DashboardPage() {
                     }}
                   />
                 </div>
-                <Link href={product.href} className="mt-4 block">
-                  <p className="min-h-[56px] text-sm leading-7 text-black/58">
-                    {product.description}
-                  </p>
-                </Link>
               </article>
             ))}
           </div>
