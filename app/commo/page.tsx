@@ -1,82 +1,126 @@
-import { ArrowRight, BarChart3, MessageCircle, ShieldCheck } from "lucide-react";
-import Link from "next/link";
-import type { ComponentType } from "react";
-
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
 
-type ProductLink = {
-  title: string;
-  description: string;
-  href: string;
-  icon: ComponentType<{ size?: number; className?: string }>;
-};
+const commoLinks = [
+  {
+    label: "HP",
+    href: "https://commotool.com/",
+    value: "commotool.com",
+  },
+  {
+    label: "管理画面 デモ",
+    href: "https://commo-demo.vercel.app/",
+    value: "commo-demo.vercel.app",
+  },
+] as const;
 
-const links = [
+const pdfItems = [
   {
-    title: "公式LINE導入シミュレーション",
-    description: "友だち追加、再来訪、自社予約移行、収支改善を試算します。",
-    href: "/simulation/commo",
-    icon: BarChart3,
+    title: "ゴルフ場様向け",
+    href: "/pdfs/commo-golf.pdf",
+    pages: "19ページ",
   },
   {
-    title: "LINEミニページ",
-    description: "LINE配信や営業提案で見せるミニページデモを確認します。",
-    href: "/simulation/commo/mini",
-    icon: MessageCircle,
-  },
-  {
-    title: "匿名成功事例",
-    description: "公式LINE活用事例を課題・業種別に探せます。",
-    href: "/simulation/commo/cases",
-    icon: ShieldCheck,
+    title: "ホテル様向け",
+    href: "/pdfs/commo-hotel.pdf",
+    pages: "15ページ",
   },
 ] as const;
 
 export default function CommoPage() {
-  return <ProductLanding eyebrow="COMMO." title="commo." body="公式LINEを活用して、来場後・来店後・宿泊後の接点づくりから再来訪、自社予約への誘導までを整理するサービスです。" links={links} />;
-}
-
-function ProductLanding({
-  eyebrow,
-  title,
-  body,
-  links,
-}: {
-  eyebrow: string;
-  title: string;
-  body: string;
-  links: readonly ProductLink[];
-}) {
   return (
     <main className="min-h-screen bg-white text-black">
       <SiteHeader active="Products" />
+
       <section className="mx-auto flex w-full max-w-7xl flex-col gap-12 px-6 py-8 sm:px-8 lg:px-10 lg:py-10">
         <section className="grid min-h-[42vh] gap-10 border-b border-black/8 pb-10 lg:grid-cols-[180px_1fr] lg:items-end lg:gap-12">
-          <p className="text-sm tracking-[0.18em] text-black/35">{eyebrow}</p>
+          <p className="text-sm tracking-[0.18em] text-black/35">COMMO.</p>
           <div className="max-w-5xl">
-            <h1 className="text-[2.6rem] leading-[1.05] font-light tracking-[-0.05em] sm:text-[4.4rem] lg:text-[6rem]">{title}</h1>
-            <p className="mt-6 max-w-3xl text-sm leading-8 text-black/65 sm:text-base">{body}</p>
+            <h1 className="text-[2.6rem] leading-[1.05] font-light tracking-normal sm:text-[4.4rem] lg:text-[6rem]">
+              commo<span className="text-[#7c3aed]">.</span>
+            </h1>
           </div>
         </section>
-        <section className="grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-3">
-          {links.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Link key={item.href} href={item.href} className="group bg-white p-5 transition hover:bg-[#fbfbfc]">
-                <div className="flex items-start justify-between gap-4">
-                  <span className="flex h-11 w-11 items-center justify-center border border-black/10 text-black/58 transition group-hover:border-black/25 group-hover:text-black">
-                    <Icon size={20} />
-                  </span>
-                  <ArrowRight size={17} className="text-black/35 transition group-hover:translate-x-0.5 group-hover:text-black" />
+
+        <section className="grid gap-px bg-black/8 md:grid-cols-2">
+          {commoLinks.map((item) => (
+            <a
+              key={item.href}
+              href={item.href}
+              target="_blank"
+              rel="noreferrer"
+              className="group bg-white p-5 transition hover:bg-[#fbfbfc]"
+            >
+              <p className="text-[11px] tracking-[0.18em] text-black/35">
+                {item.label}
+              </p>
+              <p className="mt-3 text-xl font-light text-black/82 transition group-hover:text-[#7c3aed]">
+                {item.value}
+              </p>
+            </a>
+          ))}
+        </section>
+
+        <section className="border border-black/8 bg-white p-5">
+          <p className="text-[11px] tracking-[0.18em] text-black/35">
+            DEMO LOGIN
+          </p>
+          <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2">
+            <div className="bg-white p-4">
+              <p className="text-xs text-black/42">メールアドレス</p>
+              <p className="mt-2 text-base font-medium text-black/78">
+                info@mogcia.jp
+              </p>
+            </div>
+            <div className="bg-white p-4">
+              <p className="text-xs text-black/42">パスワード</p>
+              <p className="mt-2 text-base font-medium text-black/78">
+                mogcia1106
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <section className="space-y-5">
+          <div>
+            <p className="text-xs tracking-[0.18em] text-black/35">
+              PROPOSAL PDF
+            </p>
+            <h2 className="mt-2 text-2xl font-light">提案資料</h2>
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-2">
+            {pdfItems.map((item) => (
+              <article key={item.href} className="border border-black/8 bg-white">
+                <div className="flex flex-col gap-3 border-b border-black/8 p-5 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-[11px] tracking-[0.18em] text-black/35">
+                      {item.pages}
+                    </p>
+                    <h3 className="mt-2 text-xl font-light text-black/82">
+                      {item.title}
+                    </h3>
+                  </div>
+                  <a
+                    href={item.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
+                  >
+                    PDFを開く
+                  </a>
                 </div>
-                <h2 className="mt-5 text-xl font-medium tracking-[-0.02em] transition group-hover:text-[#5b21b6]">{item.title}</h2>
-                <p className="mt-3 text-sm leading-7 text-black/58">{item.description}</p>
-              </Link>
-            );
-          })}
+                <iframe
+                  src={`${item.href}#toolbar=1&navpanes=0`}
+                  title={`commo. ${item.title} PDF`}
+                  className="h-[520px] w-full bg-[#f7f7f8]"
+                />
+              </article>
+            ))}
+          </div>
         </section>
       </section>
+
       <SiteFooter />
     </main>
   );
