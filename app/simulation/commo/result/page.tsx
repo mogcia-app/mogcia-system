@@ -2,7 +2,6 @@ import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
 
-import AuthGuard from "@/components/auth-guard";
 import EstimateSimulator from "@/components/estimate-simulator";
 import SiteFooter from "@/components/site-footer";
 import SiteHeader from "@/components/site-header";
@@ -29,19 +28,17 @@ export default function CommoSimulationResultPage() {
           </h1>
         </section>
 
-        <AuthGuard>
-          <Suspense
-            fallback={
-              <section className="border border-black/8 bg-white px-6 py-10 text-center">
-                <p className="text-sm leading-7 text-black/55">
-                  シミュレーション結果を読み込んでいます。
-                </p>
-              </section>
-            }
-          >
-            <EstimateSimulator mode="result" />
-          </Suspense>
-        </AuthGuard>
+        <Suspense
+          fallback={
+            <section className="border border-black/8 bg-white px-6 py-10 text-center">
+              <p className="text-sm leading-7 text-black/55">
+                シミュレーション結果を読み込んでいます。
+              </p>
+            </section>
+          }
+        >
+          <EstimateSimulator mode="result" />
+        </Suspense>
       </section>
 
       <SiteFooter />

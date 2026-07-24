@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Portfolio Showcase",
-  description: "HP・LP・SNS の制作実績を一覧と詳細で見せるポートフォリオサイト",
+  title: "MOGCIA-System",
+  description: "制作事例を一覧と詳細で確認できる実績ライブラリ",
   icons: {
     icon: "/ficon.png",
     shortcut: "/ficon.png",

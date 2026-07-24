@@ -14,10 +14,23 @@ const publicPaths = new Set([
   "/line-mini-pages/bridgestone/line-message",
 ]);
 
+function hasValidShareToken() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const share = new URLSearchParams(window.location.search).get("share");
+  const expiresAt = Number.parseInt(String(share || "").split(".")[0] || "", 36);
+
+  return Number.isFinite(expiresAt) && expiresAt > Date.now();
+}
+
 export default function ProtectedRoutes({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const hasShareToken =
+    pathname === "/simulation/commo/result" && hasValidShareToken();
 
-  if (publicPaths.has(pathname)) {
+  if (publicPaths.has(pathname) || hasShareToken) {
     return <>{children}</>;
   }
 

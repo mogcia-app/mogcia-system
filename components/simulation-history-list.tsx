@@ -9,7 +9,7 @@ import {
   orderBy,
   query,
 } from "firebase/firestore";
-import { CalendarDays, Trash2 } from "lucide-react";
+import { CalendarDays, ChevronDown, Eye, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
@@ -43,6 +43,13 @@ type SavedSimulation = {
   savedAt: string;
   industryLabel: string;
   facilityName: string;
+  inputs?: Record<string, string | number | string[]>;
+  assumptions?: {
+    feeReductionStartMonth: number;
+    feeReductionRate: number;
+    monthlyOperationCost: number;
+    pricingPlan: string;
+  };
   result: {
     currentRevenue: number;
     monthlyImpact: number;
@@ -51,6 +58,49 @@ type SavedSimulation = {
   sheetBlock: SheetBlock;
   aiComment: AiComment | null;
 };
+
+const inputLabels: Record<string, string> = {
+  facilityName: "施設名",
+  monthlyCustomers: "月間来場者数",
+  currentLineFriends: "現在のLINE友だち数",
+  avgVisitsPerPerson: "1人あたり年間平均来場回数",
+  memberCount: "会員数",
+  memberAverageUnitPrice: "メンバー平均プレー料金",
+  visitorAverageUnitPrice: "ビジター平均プレー料金",
+  memberVisitShare: "会員の来場構成比",
+  thirdPartyRatio: "外部予約サイト比率",
+  directRatio: "自社予約比率",
+  phoneRatio: "電話予約比率",
+  commissionRate: "外部予約サイト手数料率",
+  signupRate: "LINE登録率",
+  maxPenetration: "友だち到達上限",
+  lineBlockRate: "LINEブロック率",
+  annualRevisitRate: "年間追加再来訪率",
+  directBookingShiftRate: "自社予約シフト率",
+  grossMargin: "追加売上の粗利率",
+  currentIssue: "現在の課題",
+  currentIssueFree: "その他の課題",
+  targetCustomers: "増やしたい利用者",
+  priorityTargetCustomer: "最優先顧客",
+  improvementFocus: "改善したい項目",
+  lineChannels: "LINE登録導線",
+  additionalServices: "追加サービス",
+  reinvestmentItems: "この金額を何に活用？",
+};
+
+const hiddenInputKeys = new Set([
+  "bookingCostModel",
+  "directPlayUnitPrice",
+  "bookingSitePlayUnitPrice",
+  "friendRepeatConversionRate",
+  "averageStayNights",
+  "monthlyBroadcastCount",
+  "segmentDeliveryRate",
+  "lineGrowthCase",
+  "additionalServiceUsageRate",
+  "additionalServiceUnitPrice",
+  "improvementFocusOther",
+]);
 
 const formatYen = (value: number) =>
   new Intl.NumberFormat("ja-JP", {
@@ -79,6 +129,37 @@ const formatDateTime = (value: string) => {
     minute: "2-digit",
   }).format(date);
 };
+
+const formatInputValue = (value: string | number | string[]) => {
+  if (Array.isArray(value)) {
+    return value.length ? value.join("、") : "未入力";
+  }
+
+  if (value === "" || value === undefined || value === null) {
+    return "未入力";
+  }
+
+  return String(value);
+};
+
+function getSavedInputEntries(savedSimulation: SavedSimulation) {
+  const inputs = savedSimulation.inputs ?? {};
+
+  return Object.entries(inputLabels)
+    .filter(([key]) => !hiddenInputKeys.has(key))
+    .map(([key, label]) => ({
+      key,
+      label,
+      value: inputs[key],
+    }))
+    .filter(({ value }) => {
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+
+      return value !== undefined && value !== "";
+    });
+}
 
 function getLastValue(savedSimulation: SavedSimulation, label: string) {
   const row = savedSimulation.sheetBlock.rows.find((item) => item.label === label);
@@ -252,6 +333,8 @@ export default function SimulationHistoryList() {
             "LINE経由予約見込み",
           ]);
           const lineFriends = getLastValue(savedSimulation, "累計登録者数");
+          const currentLineFriends =
+            lineFriends || getLastValue(savedSimulation, "累計LINE友だち数");
           const deliveryCount = getLastValue(savedSimulation, "月間配信回数");
 
           return (
@@ -298,9 +381,20 @@ export default function SimulationHistoryList() {
                 <HistoryMetric
                   label="12ヶ月目の配信回数・友だち数"
                   value={`${formatNumber(deliveryCount)}回 / ${formatNumber(
-                    lineFriends,
+                    currentLineFriends,
                   )}人`}
                 />
+              </div>
+
+              <div className="flex flex-col gap-3 border-t border-black/8 px-5 py-4 sm:flex-row sm:items-center">
+                <Link
+                  href={`/simulation/commo/result?id=${savedSimulation.id}`}
+                  className="inline-flex h-10 items-center justify-center gap-2 bg-[#2E6B4F] px-4 text-sm font-medium text-white transition hover:bg-[#24563f]"
+                >
+                  <Eye size={16} />
+                  詳細結果を見る・編集
+                </Link>
+                <SavedInputDetails savedSimulation={savedSimulation} />
               </div>
 
               {savedSimulation.aiComment ? (
@@ -325,6 +419,68 @@ export default function SimulationHistoryList() {
         })}
       </div>
     </section>
+  );
+}
+
+function SavedInputDetails({
+  savedSimulation,
+}: {
+  savedSimulation: SavedSimulation;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const entries = getSavedInputEntries(savedSimulation);
+
+  return (
+    <div className="min-w-0 flex-1">
+      <button
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+        className="inline-flex h-10 items-center justify-center gap-2 border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
+        aria-expanded={isOpen}
+      >
+        入力データを見る
+        <ChevronDown
+          size={16}
+          className={["transition", isOpen ? "rotate-180" : ""].join(" ")}
+        />
+      </button>
+      {isOpen ? (
+        <div className="mt-4 border border-black/8 bg-[#fbfbfc] p-4">
+          <div className="grid gap-px bg-black/8 md:grid-cols-2 lg:grid-cols-3">
+            {entries.map((entry) => (
+              <div key={entry.key} className="bg-white p-3">
+                <p className="text-[11px] tracking-[0.14em] text-black/38">
+                  {entry.label}
+                </p>
+                <p className="mt-2 text-sm leading-6 text-black/72">
+                  {formatInputValue(entry.value ?? "")}
+                </p>
+              </div>
+            ))}
+            {savedSimulation.assumptions ? (
+              <>
+                <div className="bg-white p-3">
+                  <p className="text-[11px] tracking-[0.14em] text-black/38">
+                    月額運用費
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-black/72">
+                    {formatYen(savedSimulation.assumptions.monthlyOperationCost)}
+                  </p>
+                </div>
+                <div className="bg-white p-3">
+                  <p className="text-[11px] tracking-[0.14em] text-black/38">
+                    選択プラン
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-black/72">
+                    {savedSimulation.assumptions.pricingPlan}
+                  </p>
+                </div>
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

@@ -2,6 +2,7 @@
 "use client";
 
 import { collection, doc, getDoc, setDoc } from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   ArrowRight,
   CalendarDays,
@@ -20,6 +21,13 @@ import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import { firebaseAuth, firebaseDb } from "@/lib/firebase";
+import {
+  buildCommoFallbackDiagnosis,
+  simulateCommo,
+  stableCommoInputHash,
+  type CommoInput,
+  type CommoSimulationResult,
+} from "@/lib/commo-simulation";
 
 type Industry = "hotel" | "golf" | "restaurant";
 type ScenarioKey = "repeat";
@@ -31,6 +39,7 @@ type SimulationInputs = Record<string, string | number | string[]>;
 type EstimateSimulatorMode = "input" | "result";
 
 type SimulationDraft = {
+  v?: number;
   isDraft?: boolean;
   savedAt?: string;
   industry: Industry;
@@ -106,6 +115,12 @@ type ProjectionRow = {
   isAggressive: boolean;
 };
 
+type CommoScenarioSummary = {
+  signupRate: number;
+  label: string;
+  result: CommoSimulationResult;
+};
+
 type BenchmarkPoint = {
   month: number;
   projectedLineFriends: number;
@@ -161,6 +176,7 @@ type SavedSimulation = {
   industryLabel: string;
   facilityName: string;
   inputs: SimulationInputs;
+  draftData?: SimulationDraft;
   result: SimulationResult;
   sheetBlock: SheetBlock;
   aiComment: AiComment | null;
@@ -348,13 +364,19 @@ const fieldsByIndustry: Record<Industry, FieldConfig[]> = {
     },
   ],
   golf: [
-    { key: "monthlyCustomers", label: "月間来場者数", suffix: "人" },
+    { key: "monthlyCustomers", label: "月間来場者数", suffix: "人", required: true },
+    { key: "currentLineFriends", label: "現在のLINE友だち数", suffix: "人", placeholder: "例：1540", helpText: "既に運用中の公式LINEがある場合は現在の友だち数を入力します。" },
+    { key: "avgVisitsPerPerson", label: "1人あたり年間平均来場回数", suffix: "回", placeholder: "例：3", helpText: "ユニーク来場者数と友だち数の到達上限を計算します。" },
     { key: "memberCount", label: "会員数", suffix: "人" },
     { key: "memberAverageUnitPrice", label: "メンバー平均プレー料金", suffix: "円" },
     { key: "visitorAverageUnitPrice", label: "ビジター平均プレー料金", suffix: "円" },
+    { key: "memberVisitShare", label: "会員の来場構成比", suffix: "%", placeholder: "例：40", helpText: "メンバー料金とビジター料金の加重平均に使います。" },
     { key: "thirdPartyRatio", label: "外部予約サイト比率", suffix: "%" },
     { key: "directRatio", label: "自社予約比率", suffix: "%" },
     { key: "phoneRatio", label: "電話予約比率", suffix: "%" },
+    { key: "signupRate", label: "LINE登録率", suffix: "%", placeholder: "例：10", helpText: "声かけ・QR導線・登録特典の強さに応じて変える主要前提です。" },
+    { key: "maxPenetration", label: "友だち到達上限", suffix: "%", placeholder: "例：50", helpText: "ユニーク来場者のうち、最終的に友だち化できる上限です。" },
+    { key: "grossMargin", label: "追加売上の粗利率", suffix: "%", placeholder: "例：70", helpText: "収支・ROIは売上ではなく利益ベースで計算します。" },
     { key: "eventCount", label: "イベント数", suffix: "件/月" },
     { key: "repeatRatio", label: "リピーター比率", suffix: "%" },
     {
@@ -507,6 +529,30 @@ const additionalServiceOptionsByIndustry: Record<Industry, string[]> = {
     "記念日プラン",
     "追加サービスなし",
     "その他",
+  ],
+};
+
+const reinvestmentOptionsByIndustry: Record<Industry, string[]> = {
+  hotel: [
+    "客室備品やアメニティの改善",
+    "朝食内容の充実",
+    "スタッフ教育、人員確保",
+    "公式サイトや写真素材の改善",
+    "宿泊料金への還元",
+  ],
+  golf: [
+    "コース整備・グリーンコンディションの向上",
+    "レストラン・食事メニューの強化",
+    "キャディ・スタッフの教育、人員確保",
+    "カート・練習場などの設備更新",
+    "送客手数料の削減分を料金に還元",
+  ],
+  restaurant: [
+    "メニュー開発",
+    "接客品質の向上",
+    "店内設備の改善",
+    "予約導線の整備",
+    "価格や特典への還元",
   ],
 };
 
@@ -833,16 +879,24 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
   golf: {
     facilityName: "",
     monthlyCustomers: "",
+    currentLineFriends: 0,
+    avgVisitsPerPerson: 3,
     memberCount: "",
     memberAverageUnitPrice: "",
     visitorAverageUnitPrice: "",
+    memberVisitShare: 40,
     thirdPartyRatio: "",
     bookingCostModel: "commission",
-    commissionRate: "",
+    commissionRate: 6,
     directPlayUnitPrice: "",
     bookingSitePlayUnitPrice: "",
     directRatio: "",
     phoneRatio: "",
+    signupRate: 10,
+    maxPenetration: 50,
+    grossMargin: 70,
+    annualRevisitRate: 15,
+    directBookingShiftRate: 30,
     eventCount: "",
     repeatRatio: "",
     currentIssue: [],
@@ -856,9 +910,8 @@ const defaultsByIndustry: Record<Industry, SimulationInputs> = {
     additionalServices: ["追加サービスなし"],
     additionalServiceUsageRate: "",
     additionalServiceUnitPrice: "",
-    lineBlockRate: lineBenchmarkDefaults.blockRate,
+    lineBlockRate: 27,
     friendRepeatConversionRate: "",
-    directBookingShiftRate: "",
     averageStayNights: 1,
     monthlyBroadcastCount: lineBenchmarkDefaults.monthlyBroadcastCount,
     segmentDeliveryRate: lineBenchmarkDefaults.segmentDeliveryRate,
@@ -962,12 +1015,16 @@ const getLineRegistrationBasis = (
 ) => {
   const customerLabel = getCustomerLabel(industry);
   const lineCase = getLineGrowthCase(inputs);
+  const signupRate =
+    industry === "golf" && toNumber(inputs.signupRate) > 0
+      ? toNumber(inputs.signupRate)
+      : lineCase.rate;
 
   return `月間追加登録数は、${customerLabel}${formatNumber(
     getMonthlyCustomers(industry, inputs),
-  )}人 × LINE登録率${lineCase.rate.toFixed(
+  )}人 × LINE登録率${signupRate.toFixed(
     1,
-  )}%（${lineCase.label}）から、ブロック率${formatPercent(
+  )}%（${industry === "golf" ? "入力値" : lineCase.label}）から、ブロック率${formatPercent(
     getLineBlockRate(inputs),
   )}を控除したネット友だち数で試算しています。`;
 };
@@ -977,7 +1034,25 @@ function encodeSimulationDraft(draft: SimulationDraft) {
 }
 
 function decodeSimulationDraft(value: string) {
-  return JSON.parse(decodeURIComponent(atob(value))) as SimulationDraft;
+  const draft = JSON.parse(decodeURIComponent(atob(value))) as SimulationDraft;
+  const industry = draft.industry ?? "hotel";
+  const mergedInputs = {
+    ...defaultsByIndustry,
+    ...(draft.inputsByIndustry ?? {}),
+    [industry]: {
+      ...defaultsByIndustry[industry],
+      ...(draft.inputsByIndustry?.[industry] ?? {}),
+    },
+  };
+
+  return {
+    ...draft,
+    v: draft.v ?? 1,
+    inputsByIndustry: mergedInputs,
+    selectedPricingPlan: draft.selectedPricingPlan ?? "basic",
+    feeReductionStartMonth: draft.feeReductionStartMonth ?? 6,
+    feeReductionRate: draft.feeReductionRate ?? 5,
+  } as SimulationDraft;
 }
 
 function getCustomerLabel(industry: Industry) {
@@ -1028,6 +1103,11 @@ const isRatioField = (key: string) =>
     "friendRepeatConversionRate",
     "directBookingShiftRate",
     "segmentDeliveryRate",
+    "memberVisitShare",
+    "signupRate",
+    "maxPenetration",
+    "grossMargin",
+    "annualRevisitRate",
   ].includes(key);
 
 const formatInputValue = (value: unknown) => {
@@ -1045,6 +1125,10 @@ function getLineAccountStatus(inputs: SimulationInputs) {
 }
 
 function getCurrentLineFriends(inputs: SimulationInputs) {
+  if ("avgVisitsPerPerson" in inputs || "memberVisitShare" in inputs) {
+    return toNumber(inputs.currentLineFriends);
+  }
+
   return getLineAccountStatus(inputs) === "none"
     ? 0
     : toNumber(inputs.currentLineFriends);
@@ -1107,14 +1191,16 @@ function getDirectBookingShiftRate(inputs: SimulationInputs) {
   return getSimulationAssumptionValue(
     inputs,
     "directBookingShiftRate",
-    getLineGrowthCase(inputs).directBookingShiftRate,
+    "avgVisitsPerPerson" in inputs
+      ? 30
+      : getLineGrowthCase(inputs).directBookingShiftRate,
   );
 }
 
 function getAverageStayNightsForSimulation(inputs: SimulationInputs) {
   return getSimulationAssumptionValue(
     inputs,
-    "averageStayNights",
+    "avgVisitsPerPerson" in inputs ? "avgVisitsPerPerson" : "averageStayNights",
     lineBenchmarkDefaults.averageStayNights,
     30,
   );
@@ -1252,10 +1338,13 @@ function getAverageUnitPrice(industry: Industry, inputs: SimulationInputs) {
 
   const memberPrice = toNumber(inputs.memberAverageUnitPrice);
   const visitorPrice = toNumber(inputs.visitorAverageUnitPrice);
-  const visitorRatio = Math.min(toNumber(inputs.thirdPartyRatio), 100) / 100;
+  const memberVisitShare = Math.min(
+    Math.max(toNumber(inputs.memberVisitShare) || 40, 0),
+    100,
+  ) / 100;
 
   if (memberPrice > 0 && visitorPrice > 0) {
-    return memberPrice * (1 - visitorRatio) + visitorPrice * visitorRatio;
+    return memberPrice * memberVisitShare + visitorPrice * (1 - memberVisitShare);
   }
 
   return visitorPrice || memberPrice || toNumber(inputs.averageUnitPrice);
@@ -1414,6 +1503,65 @@ function getAnnualOtaCommissionEstimate(industry: Industry, inputs: SimulationIn
     inputs,
     unitPrice,
   ) / Math.max(unitPrice, 1) * 12;
+}
+
+function getCommoInput(
+  industry: Industry,
+  inputs: SimulationInputs,
+  monthlyCost = pricingPlans.basic.monthlyOperationCost,
+): CommoInput {
+  const memberPrice =
+    industry === "golf"
+      ? toNumber(inputs.memberAverageUnitPrice)
+      : getAverageUnitPrice(industry, inputs);
+  const visitorPrice =
+    industry === "golf"
+      ? toNumber(inputs.visitorAverageUnitPrice)
+      : getAverageUnitPrice(industry, inputs);
+
+  return {
+    industry,
+    facilityName: String(inputs.facilityName || ""),
+    monthlyVisitors: getMonthlyCustomers(industry, inputs),
+    avgVisitsPerPerson:
+      toNumber(inputs.avgVisitsPerPerson) ||
+      getAverageStayNightsForSimulation(inputs) ||
+      3,
+    memberPrice,
+    visitorPrice: visitorPrice || memberPrice,
+    memberVisitShare:
+      industry === "golf"
+        ? (toNumber(inputs.memberVisitShare) || 40) / 100
+        : 0,
+    otaRatio: toNumber(inputs.thirdPartyRatio) / 100,
+    ownRatio: toNumber(inputs.directRatio) / 100,
+    phoneRatio: toNumber(inputs.phoneRatio) / 100,
+    otaFeeRate: getCommissionRate(industry, inputs),
+    existingFriends: getCurrentLineFriends(inputs),
+    blockRate: getLineBlockRate(inputs) / 100,
+    maxPenetration: (toNumber(inputs.maxPenetration) || 50) / 100,
+    signupRate: (toNumber(inputs.signupRate) || getLineGrowthCase(inputs).rate) / 100,
+    annualRevisitRate:
+      (toNumber(inputs.annualRevisitRate) ||
+        getFriendRepeatConversionRate(inputs)) / 100,
+    ownShiftRate: getDirectBookingShiftRate(inputs) / 100,
+    grossMargin: (toNumber(inputs.grossMargin) || 70) / 100,
+    initialCost: initialLineSetupCost,
+    monthlyCost,
+    challenges: getSelectedStrings(inputs, "currentIssue"),
+  };
+}
+
+function getCommoSimulation(
+  industry: Industry,
+  inputs: SimulationInputs,
+  assumptions: SimulationAssumptions,
+  months = 36,
+) {
+  return simulateCommo(
+    getCommoInput(industry, inputs, assumptions.monthlyOperationCost),
+    months,
+  );
 }
 
 function getExternalCostLabel(industry: Industry) {
@@ -1598,6 +1746,31 @@ function calculateSimulation(
   scenario: Record<ScenarioKey, number>,
   assumptions: SimulationAssumptions,
 ): SimulationResult {
+  if (industry === "golf") {
+    const commo = getCommoSimulation(industry, inputs, assumptions);
+    const year1 = commo.yearSummaries[0];
+    const month12 = commo.rows[11];
+    const currentRevenue = commo.annualRevenue / 12;
+    const monthlyImpact = month12?.monthlyProfit ?? 0;
+
+    return {
+      currentRevenue,
+      improvedRevenue: currentRevenue + monthlyImpact,
+      monthlyImpact,
+      annualImpact: year1.totalProfit,
+      feeSaving: month12?.otaSaving ?? 0,
+      lineImpact: month12?.extraRevenue ?? 0,
+      repeatImpact: month12?.repeatProfit ?? 0,
+      directImpact: month12?.otaSaving ?? 0,
+      unitPriceImpact: month12?.inquirySaving ?? 0,
+      priority: [
+        "再来場につながるLINE配信",
+        "外部予約サイトから自社予約への段階的な誘導",
+        "問い合わせ対応時間の削減",
+      ],
+    };
+  }
+
   const currentRevenue = getCurrentRevenue(industry, inputs);
   const monthlyCustomers = getMonthlyCustomers(industry, inputs);
   const unitPrice = getAverageUnitPrice(industry, inputs);
@@ -1698,6 +1871,82 @@ function buildProjectionRows(
   result: SimulationResult,
   assumptions: SimulationAssumptions,
 ): ProjectionRow[] {
+  if (industry === "golf") {
+    const commo = getCommoSimulation(industry, inputs, assumptions);
+    const currentRevenue = commo.annualRevenue / 12;
+    const surveyRate = getLineGrowthCase(inputs).surveyResponseRate / 100;
+    let previousFriends = getCurrentLineFriends(inputs);
+
+    return commo.rows.map((row) => {
+      const monthlyNewLineFriends = Math.max(row.friends - previousFriends, 0);
+      previousFriends = row.friends;
+      const lineReservationRevenue = row.extraRevenue;
+      const salesImprovement = row.repeatProfit;
+      const costImprovement = row.otaSaving + row.inquirySaving;
+      const monthlyDifference = row.monthlyProfit;
+      const allBroadcastMessages = row.effective * getMonthlyBroadcastCount(inputs);
+      const segmentedBroadcastMessages =
+        allBroadcastMessages * (getSegmentDeliveryRate(inputs) / 100);
+
+      return {
+        label: `${row.month}ヶ月目`,
+        month: row.month,
+        ramp: Math.min(row.month / 12, 1),
+        withoutLineMonthlyRevenue: currentRevenue,
+        withLineMonthlyRevenue: currentRevenue + monthlyDifference,
+        monthlyGrowthRate:
+          currentRevenue > 0 ? (monthlyDifference / currentRevenue) * 100 : 0,
+        monthlyDifference,
+        withoutLineCumulativeRevenue: currentRevenue * row.month,
+        withLineCumulativeRevenue:
+          currentRevenue * row.month +
+          commo.rows
+            .slice(0, row.month)
+            .reduce((sum, item) => sum + item.monthlyProfit, 0),
+        cumulativeDifference: commo.rows
+          .slice(0, row.month)
+          .reduce((sum, item) => sum + item.monthlyProfit, 0),
+        lineFriends: row.friends,
+        monthlyNewLineFriends,
+        deliveryCount: getMonthlyDeliveryCount(row.month),
+        allBroadcastMessages,
+        segmentedBroadcastMessages,
+        allBroadcastCost: calculateLineOfficialCost(allBroadcastMessages).cost,
+        segmentedBroadcastCost: calculateLineOfficialCost(segmentedBroadcastMessages).cost,
+        messageCostSaving: Math.max(
+          calculateLineOfficialCost(allBroadcastMessages).cost -
+            calculateLineOfficialCost(segmentedBroadcastMessages).cost,
+          0,
+        ),
+        deliveryReservationRate: commo.input.annualRevisitRate / 12,
+        estimatedReservations: row.extraRounds,
+        lineReservationRevenue,
+        salesImprovement,
+        costImprovement,
+        activeLineFriends: row.effective,
+        monthlyDeliveryAudience: row.effective,
+        linkResponders: row.extraRounds,
+        reservationPageVisitors: row.shiftedVisits,
+        lineReservations: row.extraRounds,
+        surveyRespondents: row.effective * surveyRate,
+        surveyUnanswered: row.effective * (1 - surveyRate),
+        classifiedCustomers: row.effective * surveyRate,
+        priorityCustomerCount: row.effective * surveyRate * 0.45,
+        repeatRevenue: row.repeatProfit,
+        vacantSlotRevenue: row.otaSaving,
+        feeSaving: row.otaSaving,
+        unitPriceIncreaseRevenue: row.inquirySaving,
+        monthlyProfit: row.monthlyNetProfit,
+        cumulativeProfit: row.cumulative,
+        repeatRatio: toNumber(inputs.repeatRatio),
+        directRatio: row.ownRatio * 100,
+        thirdPartyRatio: row.otaRatio * 100,
+        unitPrice: commo.avgPrice,
+        isAggressive: false,
+      };
+    });
+  }
+
   const monthlyCustomers = getMonthlyCustomers(industry, inputs);
   const currentLineFriends = getCurrentLineFriends(inputs);
   const currentRepeatRatio = toNumber(inputs.repeatRatio);
@@ -1920,41 +2169,42 @@ function buildSheetBlock(
   scenario: Record<ScenarioKey, number>,
   assumptions: SimulationAssumptions,
 ): SheetBlock {
+  const displayRows = rows.slice(0, 12);
   const labels = industryMessageLabels[industry];
-  const withLineRevenue = rows.map((row) => row.monthlyDifference);
-  const salesImprovements = rows.map((row) => row.salesImprovement);
-  const costImprovements = rows.map((row) => row.costImprovement);
-  const monthlyNewLineFriends = rows.map((row) => row.monthlyNewLineFriends);
-  const lineFriends = rows.map((row) => row.lineFriends);
-  const surveyRespondents = rows.map((row) => row.surveyRespondents);
-  const classifiedCustomers = rows.map((row) => row.classifiedCustomers);
-  const activeLineFriends = rows.map((row) => row.activeLineFriends);
-  const monthlyDeliveryAudience = rows.map((row) => row.monthlyDeliveryAudience);
-  const linkResponders = rows.map((row) => row.linkResponders);
-  const reservationPageVisitors = rows.map((row) => row.reservationPageVisitors);
-  const deliveryCounts = rows.map((row) => row.deliveryCount);
-  const allBroadcastMessages = rows.map((row) => row.allBroadcastMessages);
-  const segmentedBroadcastMessages = rows.map((row) => row.segmentedBroadcastMessages);
-  const allBroadcastCosts = rows.map((row) => row.allBroadcastCost);
-  const segmentedBroadcastCosts = rows.map((row) => row.segmentedBroadcastCost);
-  const messageCostSavings = rows.map((row) => row.messageCostSaving);
-  const deliveryReservationRates = rows.map(
+  const withLineRevenue = displayRows.map((row) => row.monthlyDifference);
+  const salesImprovements = displayRows.map((row) => row.salesImprovement);
+  const costImprovements = displayRows.map((row) => row.costImprovement);
+  const monthlyNewLineFriends = displayRows.map((row) => row.monthlyNewLineFriends);
+  const lineFriends = displayRows.map((row) => row.lineFriends);
+  const surveyRespondents = displayRows.map((row) => row.surveyRespondents);
+  const classifiedCustomers = displayRows.map((row) => row.classifiedCustomers);
+  const activeLineFriends = displayRows.map((row) => row.activeLineFriends);
+  const monthlyDeliveryAudience = displayRows.map((row) => row.monthlyDeliveryAudience);
+  const linkResponders = displayRows.map((row) => row.linkResponders);
+  const reservationPageVisitors = displayRows.map((row) => row.reservationPageVisitors);
+  const deliveryCounts = displayRows.map((row) => row.deliveryCount);
+  const allBroadcastMessages = displayRows.map((row) => row.allBroadcastMessages);
+  const segmentedBroadcastMessages = displayRows.map((row) => row.segmentedBroadcastMessages);
+  const allBroadcastCosts = displayRows.map((row) => row.allBroadcastCost);
+  const segmentedBroadcastCosts = displayRows.map((row) => row.segmentedBroadcastCost);
+  const messageCostSavings = displayRows.map((row) => row.messageCostSaving);
+  const deliveryReservationRates = displayRows.map(
     (row) => row.deliveryReservationRate * 100,
   );
-  const estimatedReservations = rows.map((row) => row.estimatedReservations);
-  const lineReservationRevenue = rows.map((row) => row.lineReservationRevenue);
-  const repeatRevenue = rows.map((row) => row.repeatRevenue);
-  const vacantSlotRevenue = rows.map((row) => row.vacantSlotRevenue);
-  const feeSavings = rows.map((row) => row.feeSaving);
-  const unitPriceIncreaseRevenue = rows.map((row) => row.unitPriceIncreaseRevenue);
-  const growthRates = rows.map((row) => row.monthlyGrowthRate);
-  const initialCosts = rows.map((row) => (row.month === 1 ? initialLineSetupCost : 0));
-  const operationCosts = rows.map(() => assumptions.monthlyOperationCost);
-  const totalCosts = rows.map(
+  const estimatedReservations = displayRows.map((row) => row.estimatedReservations);
+  const lineReservationRevenue = displayRows.map((row) => row.lineReservationRevenue);
+  const repeatRevenue = displayRows.map((row) => row.repeatRevenue);
+  const vacantSlotRevenue = displayRows.map((row) => row.vacantSlotRevenue);
+  const feeSavings = displayRows.map((row) => row.feeSaving);
+  const unitPriceIncreaseRevenue = displayRows.map((row) => row.unitPriceIncreaseRevenue);
+  const growthRates = displayRows.map((row) => row.monthlyGrowthRate);
+  const initialCosts = displayRows.map((row) => (row.month === 1 ? initialLineSetupCost : 0));
+  const operationCosts = displayRows.map(() => assumptions.monthlyOperationCost);
+  const totalCosts = displayRows.map(
     (_, index) => initialCosts[index] + operationCosts[index],
   );
-  const grossProfits = rows.map((row) => row.monthlyProfit);
-  const cumulativeProfits = rows.map((row) => row.cumulativeProfit);
+  const grossProfits = displayRows.map((row) => row.monthlyProfit);
+  const cumulativeProfits = displayRows.map((row) => row.cumulativeProfit);
 
   return {
       title: "公式LINEあり",
@@ -2173,6 +2423,7 @@ function buildSheetBlock(
 }
 
 function buildPricingPlanSummaries(rows: ProjectionRow[]): PricingPlanSummary[] {
+  const displayRows = rows.slice(0, 12);
   return (
     Object.entries(pricingPlans) as [
       PricingPlanKey,
@@ -2182,7 +2433,7 @@ function buildPricingPlanSummaries(rows: ProjectionRow[]): PricingPlanSummary[] 
     let cumulativeProfit = 0;
     let breakEvenMonth: number | null = null;
 
-    rows.forEach((row) => {
+    displayRows.forEach((row) => {
       const monthlyCost =
         plan.monthlyOperationCost +
         (row.month === 1 ? initialLineSetupCost : 0);
@@ -2219,6 +2470,7 @@ export default function EstimateSimulator({
   const searchParams = useSearchParams();
   const resultId = searchParams.get("id");
   const resultData = searchParams.get("data");
+  const isSharedView = mode === "result" && Boolean(searchParams.get("share"));
   const decodedResultDraft = useMemo(() => {
     if (mode !== "result" || !resultData) {
       return null;
@@ -2262,6 +2514,7 @@ export default function EstimateSimulator({
   const [isDetailSimulationOpen, setIsDetailSimulationOpen] = useState(false);
   const [isCalculationBreakdownOpen, setIsCalculationBreakdownOpen] =
     useState(false);
+  const [shareUrl, setShareUrl] = useState("");
 
   useEffect(() => {
     if (mode !== "result") {
@@ -2272,14 +2525,13 @@ export default function EstimateSimulator({
       return;
     }
 
-    if (!resultId || !firebaseDb || !firebaseAuth?.currentUser) {
+    if (!resultId || !firebaseDb || !firebaseAuth) {
       return;
     }
 
     const db = firebaseDb;
-    const uid = firebaseAuth.currentUser.uid;
 
-    const loadDraft = async () => {
+    const loadDraft = async (uid: string) => {
       try {
         const snapshot = await getDoc(
           doc(
@@ -2295,19 +2547,52 @@ export default function EstimateSimulator({
           return;
         }
 
-        const draft = snapshot.data() as SimulationDraft;
-        setIndustry(draft.industry);
-        setInputsByIndustry(draft.inputsByIndustry);
-        setSelectedPricingPlan(draft.selectedPricingPlan);
-        setFeeReductionStartMonth(draft.feeReductionStartMonth);
-        setFeeReductionRate(draft.feeReductionRate);
+        const savedData = snapshot.data() as SimulationDraft & SavedSimulation;
+        const draft = savedData.draftData ?? savedData;
+        const restoredIndustry = draft.industry ?? savedData.industry ?? "golf";
+        const restoredInputsByIndustry =
+          draft.inputsByIndustry ??
+          ({
+            ...defaultsByIndustry,
+            [restoredIndustry]: {
+              ...defaultsByIndustry[restoredIndustry],
+              ...(savedData.inputs ?? {}),
+              currentIssue: Array.isArray(savedData.inputs?.currentIssue)
+                ? savedData.inputs.currentIssue
+                : String(savedData.inputs?.currentIssue || "")
+                  ? String(savedData.inputs?.currentIssue).split("、")
+                  : [],
+            },
+          } as Record<Industry, SimulationInputs>);
+
+        setIndustry(restoredIndustry);
+        setInputsByIndustry(restoredInputsByIndustry);
+        setSelectedPricingPlan(draft.selectedPricingPlan ?? "basic");
+        setFeeReductionStartMonth(draft.feeReductionStartMonth ?? 6);
+        setFeeReductionRate(draft.feeReductionRate ?? 5);
         setHasSimulationRun(true);
       } catch {
         setError("シミュレーション結果の読み込みに失敗しました。");
       }
     };
 
-    void loadDraft();
+    const currentUser = firebaseAuth.currentUser;
+
+    if (currentUser) {
+      void loadDraft(currentUser.uid);
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(firebaseAuth, (user) => {
+      if (!user) {
+        return;
+      }
+
+      void loadDraft(user.uid);
+      unsubscribe();
+    });
+
+    return () => unsubscribe();
   }, [mode, resultData, resultId]);
 
   const activeIndustry = industry ?? "hotel";
@@ -2338,6 +2623,41 @@ export default function EstimateSimulator({
       ),
     [activeIndustry, inputs, scenario, result, activeAssumptions],
   );
+  const commoSimulation = useMemo(
+    () => getCommoSimulation(activeIndustry, inputs, activeAssumptions),
+    [activeIndustry, inputs, activeAssumptions],
+  );
+  const commoScenarioSummaries = useMemo<CommoScenarioSummary[]>(
+    () =>
+      [3, 10, 20].map((signupRate) => {
+        const scenarioInput = {
+          ...getCommoInput(
+            activeIndustry,
+            inputs,
+            activeAssumptions.monthlyOperationCost,
+          ),
+          signupRate: signupRate / 100,
+          challenges: [],
+        };
+
+        return {
+          signupRate,
+          label: `${signupRate}%`,
+          result: simulateCommo(scenarioInput, 36),
+        };
+      }),
+    [activeIndustry, inputs, activeAssumptions.monthlyOperationCost],
+  );
+  const diagnosisComment = useMemo(() => {
+    const hash = stableCommoInputHash({
+      inputs,
+      assumptions: activeAssumptions,
+      version: 2,
+    });
+    const text = buildCommoFallbackDiagnosis(commoSimulation);
+
+    return { hash, text };
+  }, [inputs, activeAssumptions, commoSimulation]);
   const benchmarkComparison = useMemo(
     () =>
       buildBenchmarkComparison(
@@ -2516,6 +2836,7 @@ export default function EstimateSimulator({
 
     try {
       const draft: SimulationDraft = {
+        v: 2,
         industry,
         inputsByIndustry: {
           ...defaultsByIndustry,
@@ -2555,6 +2876,17 @@ export default function EstimateSimulator({
         : typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
           : `${Date.now()}`;
+    const draftData: SimulationDraft = {
+      v: 2,
+      industry,
+      inputsByIndustry: {
+        ...defaultsByIndustry,
+        [industry]: inputsByIndustry[industry],
+      },
+      selectedPricingPlan,
+      feeReductionStartMonth,
+      feeReductionRate,
+    };
     const savedSimulation: SavedSimulation = {
       simulationVersion: 2,
       isDraft: false,
@@ -2565,8 +2897,8 @@ export default function EstimateSimulator({
       facilityName: String(inputs.facilityName || "施設名未入力"),
       inputs: {
         ...inputs,
-        currentIssue: getIssueSummary(inputs),
       },
+      draftData,
       result,
       sheetBlock,
       aiComment,
@@ -2594,7 +2926,7 @@ export default function EstimateSimulator({
         migrationRate: feeReductionRate,
         migrationTargetMonth: feeReductionStartMonth,
         feeSaving: annualMigratedFeeSaving,
-        reinvestmentItems: [],
+        reinvestmentItems: getSelectedStrings(inputs, "reinvestmentItems"),
         recommendations: salesSummary.priorities,
         diagnosis: salesSummary.diagnosis,
         planSummaries: pricingPlanSummaries,
@@ -2626,6 +2958,24 @@ export default function EstimateSimulator({
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const createShareLink = () => {
+    if (!resultData) {
+      return;
+    }
+
+    const expiresAt = Date.now() + 30 * 24 * 60 * 60 * 1000;
+    const tokenSource = `${resultData}.${expiresAt}`;
+    const shareToken = `${expiresAt.toString(36)}.${stableCommoInputHash({
+      tokenSource,
+    })}`;
+    const nextUrl = `${window.location.origin}/simulation/commo/result?data=${encodeURIComponent(
+      resultData,
+    )}&share=${shareToken}`;
+
+    setShareUrl(nextUrl);
+    void navigator.clipboard?.writeText(nextUrl);
   };
 
   return (
@@ -2767,7 +3117,7 @@ export default function EstimateSimulator({
                 <ProposalInputSections
                   industry={activeIndustry}
                   inputs={inputs}
-                  onInputChange={updateInput}
+                  onInputChange={isSharedView ? () => undefined : updateInput}
                 />
               </div>
             </section>
@@ -2779,6 +3129,62 @@ export default function EstimateSimulator({
               currentProjection={currentProjection}
               oneYearProjection={oneYearProjection}
               monthlyOperationCost={activeAssumptions.monthlyOperationCost}
+              commoSimulation={commoSimulation}
+            />
+
+            <section className="border-b border-black/8 bg-white px-5 py-6">
+              <div className="border border-[#2E6B4F]/20 bg-[#f6faf7] p-5">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <p className="text-[11px] tracking-[0.18em] text-[#2E6B4F]/70">
+                      AI DIAGNOSIS
+                    </p>
+                    <h3 className="mt-2 text-base font-medium text-[#3A2A1C]">
+                      診断コメント
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-black/35">
+                    cache: {diagnosisComment.hash}
+                  </span>
+                </div>
+                <p className="mt-4 text-sm leading-8 text-black/68">
+                  {diagnosisComment.text}
+                </p>
+              </div>
+              {commoSimulation.adjustments.length ? (
+                <div className="mt-4 grid gap-2">
+                  {commoSimulation.adjustments.map((adjustment) => (
+                    <p
+                      key={`${adjustment.key}-${adjustment.label}`}
+                      className="border border-[#C4A484]/30 bg-[#fffaf3] px-4 py-3 text-xs leading-6 text-[#5f4327]"
+                    >
+                      {adjustment.reason}（{adjustment.label}
+                      {formatPercent(adjustment.before * 100)}→
+                      {formatPercent(adjustment.after * 100)}）
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+
+            <section className="border-b border-black/8 bg-white px-5 py-6">
+              <div className="grid gap-4 xl:grid-cols-2">
+                <FriendsTrendChart
+                  summaries={commoScenarioSummaries}
+                  selectedSignupRate={toNumber(inputs.signupRate) || 10}
+                  ceiling={commoSimulation.ceiling}
+                />
+                <ProfitTrendChart
+                  rows={commoSimulation.rows}
+                  breakEvenMonth={commoSimulation.breakEvenMonth}
+                />
+              </div>
+            </section>
+
+            <AssumptionPanel
+              inputs={inputs}
+              commoSimulation={commoSimulation}
+              onInputChange={isSharedView ? undefined : updateInput}
             />
 
             <section className="border-b border-black/8 bg-white px-5 py-6">
@@ -2853,10 +3259,15 @@ export default function EstimateSimulator({
                 まず誰を増やしたいかを決め、その顧客にLINEで何を届けるかを整理します。数字は契約を迫るためではなく、施策の優先順位を決めるために使います。
               </SalesTalkAssist>
               <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+                {isSharedView ? (
+                  <p className="text-xs leading-6 text-black/45">
+                    共有ビューのため、入力編集と保存はできません。
+                  </p>
+                ) : null}
                 <button
                   type="button"
                   onClick={saveSimulation}
-                  disabled={isSaving}
+                  disabled={isSaving || isSharedView}
                   className="inline-flex h-10 items-center justify-center gap-2 bg-[#7c3aed] px-4 text-sm font-medium text-white transition hover:bg-[#6d28d9] disabled:cursor-not-allowed disabled:bg-[#c4b5fd]"
                 >
                   {isSaving ? (
@@ -2868,15 +3279,32 @@ export default function EstimateSimulator({
                     ? "保存中"
                     : isSaved
                       ? "保存済み"
-                      : "シミュレーションを保存する"}
+                      : resultId
+                        ? "変更を上書き保存する"
+                        : "シミュレーションを保存する"}
                 </button>
-                <Link
-                  href="/simulation/commo"
-                  className="inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
+                <button
+                  type="button"
+                  onClick={createShareLink}
+                  disabled={isSharedView}
+                  className="inline-flex h-10 items-center justify-center border border-[#2E6B4F]/25 px-4 text-sm font-medium text-[#2E6B4F] transition hover:border-[#2E6B4F]/50"
                 >
-                  入力内容を修正する
-                </Link>
+                  共有リンクを発行
+                </button>
+                {isSharedView ? null : (
+                  <Link
+                    href="/simulation/commo"
+                    className="inline-flex h-10 items-center justify-center border border-black/12 px-4 text-sm font-medium text-black/70 transition hover:border-black/25 hover:text-black"
+                  >
+                    入力内容を修正する
+                  </Link>
+                )}
               </div>
+              {shareUrl ? (
+                <p className="mt-3 break-all border border-black/8 bg-[#fbfbfc] px-3 py-2 text-xs leading-6 text-black/55">
+                  共有リンクをコピーしました。有効期限は30日想定です：{shareUrl}
+                </p>
+              ) : null}
             </section>
 
             <section className="border-b border-black/8 bg-[#f7f8fa]">
@@ -2900,15 +3328,35 @@ export default function EstimateSimulator({
                   <p className="text-[11px] tracking-[0.18em] text-black/35">
                     顧客基盤・自社予約移行・改善内訳
                   </p>
+              <div className="mt-4 grid gap-4 xl:grid-cols-2">
+                <ChannelShiftChart
+                  current={{
+                    ota: commoSimulation.input.otaRatio,
+                    own: commoSimulation.input.ownRatio,
+                    phone: commoSimulation.input.phoneRatio,
+                  }}
+                  after={{
+                    ota: commoSimulation.rows[11].otaRatio,
+                    own: commoSimulation.rows[11].ownRatio,
+                    phone: commoSimulation.rows[11].phoneRatio,
+                  }}
+                />
+                <ScenarioComparisonChart summaries={commoScenarioSummaries} />
+              </div>
+              <div className="mt-4">
+                <YearlyBreakdownChart result={commoSimulation} />
+              </div>
               <FeeReductionScenarioControls
                 externalSiteLabel={activeLabels.externalSiteLabel}
                 startMonth={feeReductionStartMonth}
                 reductionRate={feeReductionRate}
                 onStartMonthChange={(value) => {
+                  if (isSharedView) return;
                   setFeeReductionStartMonth(value);
                   setIsSaved(false);
                 }}
                 onReductionRateChange={(value) => {
+                  if (isSharedView) return;
                   setFeeReductionRate(value);
                   setIsSaved(false);
                 }}
@@ -2971,6 +3419,7 @@ export default function EstimateSimulator({
                     selectedPlan={selectedPricingPlan}
                     summaries={pricingPlanSummaries}
                     onPlanChange={(value) => {
+                      if (isSharedView) return;
                       setSelectedPricingPlan(value);
                       setIsSaved(false);
                     }}
@@ -3183,6 +3632,84 @@ function IssueSelector({
   );
 }
 
+function SignupRateControl({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const presets = [
+    { label: "置くだけ", value: 3 },
+    { label: "標準", value: 10 },
+    { label: "声かけ徹底", value: 20 },
+  ];
+
+  return (
+    <div className="bg-white p-5 lg:col-span-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-[11px] tracking-[0.16em] text-black/42">
+            LINE登録率
+          </p>
+          <p className="mt-2 text-xs leading-6 text-black/50">
+            QR設置だけか、スタッフ声かけまで行うかで結果が大きく変わる主要前提です。
+          </p>
+        </div>
+        <p className="text-lg font-semibold text-[#2E6B4F]">{formatPercent(value)}</p>
+      </div>
+      <div className="mt-4 flex items-center gap-3">
+        <input
+          type="range"
+          min={1}
+          max={25}
+          step={1}
+          value={value}
+          onChange={(event) => onChange(Number(event.target.value))}
+          className="h-10 flex-1 accent-[#2E6B4F]"
+        />
+        <input
+          type="number"
+          min={1}
+          max={25}
+          value={value}
+          onChange={(event) => onChange(clampDisplayNumber(event.target.value, 1, 25))}
+          className="h-10 w-20 border border-black/10 px-2 text-right text-sm outline-none focus:border-[#2E6B4F]"
+        />
+        <span className="text-sm text-black/50">%</span>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-3">
+        {presets.map((preset) => (
+          <button
+            key={preset.label}
+            type="button"
+            onClick={() => onChange(preset.value)}
+            className={[
+              "border px-3 py-2 text-left text-xs transition",
+              value === preset.value
+                ? "border-[#2E6B4F] bg-[#f6faf7] text-[#2E6B4F]"
+                : "border-black/10 text-black/55 hover:border-black/25",
+            ].join(" ")}
+          >
+            <span className="block font-medium">{preset.label}</span>
+            <span className="mt-1 block">{preset.value}%</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function clampDisplayNumber(value: string, min: number, max: number) {
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return min;
+  }
+
+  return Math.min(Math.max(parsed, min), max);
+}
+
 function ToggleOptionGroup({
   title,
   description,
@@ -3257,6 +3784,7 @@ function ProposalInputSections({
   const targetCustomers = getSelectedStrings(inputs, "targetCustomers");
   const lineChannels = getSelectedStrings(inputs, "lineChannels");
   const additionalServices = getSelectedStrings(inputs, "additionalServices");
+  const reinvestmentItems = getSelectedStrings(inputs, "reinvestmentItems");
   const recommendedCase = getRecommendedLineGrowthCase(inputs);
   const selectedCase = String(inputs.lineGrowthCase || "standard") as LineGrowthCaseKey;
   const hasAdditionalService =
@@ -3498,6 +4026,13 @@ function ProposalInputSections({
             values={additionalServices}
             onChange={(values) => onInputChange("additionalServices", values)}
           />
+          <ToggleOptionGroup
+            title="この金額を何に活用？"
+            description="削減・改善できた利益の使い道を、業種に合わせて提案書に反映します。"
+            options={reinvestmentOptionsByIndustry[industry]}
+            values={reinvestmentItems}
+            onChange={(values) => onInputChange("reinvestmentItems", values)}
+          />
           {hasAdditionalService ? (
             <>
               <HearingInput
@@ -3594,6 +4129,16 @@ function GenericHearingForm({
               inputs={inputs}
               onInputChange={onInputChange}
               onIssueToggle={onIssueToggle}
+            />
+          );
+        }
+
+        if (industry === "golf" && field.key === "signupRate") {
+          return (
+            <SignupRateControl
+              key={field.key}
+              value={toNumber(inputs.signupRate) || 10}
+              onChange={(value) => onInputChange("signupRate", String(value))}
             />
           );
         }
@@ -3995,6 +4540,489 @@ function SalesTalkAssist({ title, children }: { title: string; children: ReactNo
   );
 }
 
+const chartColors = {
+  primary: "#2E6B4F",
+  secondary: "#C4A484",
+  muted: "#D8D2CB",
+  ink: "#3A2A1C",
+  grid: "#EDEAE6",
+};
+
+function ChartFrame({
+  title,
+  subtitle,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+}) {
+  return (
+    <article className="border border-black/8 bg-white p-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h3 className="text-sm font-medium text-[#3A2A1C]">{title}</h3>
+          <p className="mt-1 text-xs leading-5 text-black/45">{subtitle}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.print()}
+          className="inline-flex h-8 w-fit items-center justify-center border border-black/10 px-3 text-xs font-medium text-black/55 transition hover:border-black/25 hover:text-black"
+        >
+          PNG書き出し
+        </button>
+      </div>
+      <div className="mt-4 overflow-x-auto">{children}</div>
+    </article>
+  );
+}
+
+function FriendsTrendChart({
+  summaries,
+  selectedSignupRate,
+  ceiling,
+}: {
+  summaries: CommoScenarioSummary[];
+  selectedSignupRate: number;
+  ceiling: number;
+}) {
+  const width = 760;
+  const height = 300;
+  const padding = { top: 24, right: 120, bottom: 38, left: 54 };
+  const maxValue = Math.max(ceiling, 1);
+  const x = (month: number) =>
+    padding.left +
+    (month / 36) * (width - padding.left - padding.right);
+  const y = (value: number) =>
+    height -
+    padding.bottom -
+    (value / maxValue) * (height - padding.top - padding.bottom);
+  const path = (summary: CommoScenarioSummary) =>
+    [`M ${x(0)} ${y(summary.result.input.existingFriends)}`]
+      .concat(
+        summary.result.rows.map(
+          (row) => `L ${x(row.month).toFixed(1)} ${y(row.effective).toFixed(1)}`,
+        ),
+      )
+      .join(" ");
+
+  return (
+    <ChartFrame
+      title="友だち数の推移"
+      subtitle="登録率3% / 10% / 20%を比較。選択中に近い線を強調しています。"
+    >
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="友だち数の36ヶ月推移"
+        className="h-auto min-w-[640px]"
+      >
+        {[0, 0.5, 1].map((ratio) => {
+          const gridY = padding.top + ratio * (height - padding.top - padding.bottom);
+          const labelValue = maxValue * (1 - ratio);
+
+          return (
+            <g key={ratio}>
+              <line x1={padding.left} y1={gridY} x2={width - padding.right} y2={gridY} stroke={chartColors.grid} />
+              <text x={padding.left - 10} y={gridY + 4} textAnchor="end" className="fill-black/40 text-[11px]">
+                {formatNumber(labelValue)}
+              </text>
+            </g>
+          );
+        })}
+        {[0, 12, 24, 36].map((month) => (
+          <text key={month} x={x(month)} y={height - 10} textAnchor="middle" className="fill-black/40 text-[11px]">
+            {month}ヶ月
+          </text>
+        ))}
+        <line
+          x1={padding.left}
+          y1={y(ceiling)}
+          x2={width - padding.right}
+          y2={y(ceiling)}
+          stroke={chartColors.secondary}
+          strokeDasharray="6 6"
+        />
+        <text x={width - padding.right + 10} y={y(ceiling) + 4} className="fill-[#8b6f52] text-[11px]">
+          到達上限 {formatNumber(ceiling)}人
+        </text>
+        {summaries.map((summary) => {
+          const isSelected = Math.abs(summary.signupRate - selectedSignupRate) < 0.5;
+
+          return (
+            <path
+              key={summary.label}
+              d={path(summary)}
+              fill="none"
+              stroke={isSelected ? chartColors.primary : chartColors.secondary}
+              strokeWidth={isSelected ? 3 : 2}
+              strokeDasharray={isSelected ? undefined : "5 6"}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          );
+        })}
+        {summaries.map((summary, index) => {
+          const last = summary.result.rows[35];
+          return (
+            <text key={summary.label} x={width - padding.right + 10} y={y(last.effective) + index * 13} className="fill-[#3A2A1C] text-[11px]">
+              登録率{summary.label} {formatNumber(last.effective)}人
+            </text>
+          );
+        })}
+      </svg>
+    </ChartFrame>
+  );
+}
+
+function ProfitTrendChart({
+  rows,
+  breakEvenMonth,
+}: {
+  rows: CommoSimulationResult["rows"];
+  breakEvenMonth: number | null;
+}) {
+  const width = 760;
+  const height = 300;
+  const padding = { top: 24, right: 96, bottom: 38, left: 64 };
+  const values = rows.flatMap((row) => [row.monthlyNetProfit, row.cumulative]);
+  const maxAbs = Math.max(...values.map((value) => Math.abs(value)), 1);
+  const x = (month: number) =>
+    padding.left +
+    ((month - 1) / 35) * (width - padding.left - padding.right);
+  const y = (value: number) =>
+    padding.top +
+    ((maxAbs - value) / (maxAbs * 2)) *
+      (height - padding.top - padding.bottom);
+  const barWidth = (width - padding.left - padding.right) / 48;
+  const cumulativePath = rows
+    .map((row, index) => {
+      const command = index === 0 ? "M" : "L";
+      return `${command} ${x(row.month).toFixed(1)} ${y(row.cumulative).toFixed(1)}`;
+    })
+    .join(" ");
+  const breakEvenRow = breakEvenMonth
+    ? rows.find((row) => row.month === breakEvenMonth)
+    : null;
+
+  return (
+    <ChartFrame
+      title="累計収支の推移"
+      subtitle="棒は月次利益から運用費を差し引いた単月収支、線は累計収支です。"
+    >
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label="累計収支の36ヶ月推移"
+        className="h-auto min-w-[640px]"
+      >
+        {[-1, 0, 1].map((ratio) => {
+          const value = maxAbs * ratio;
+          return (
+            <g key={ratio}>
+              <line x1={padding.left} y1={y(value)} x2={width - padding.right} y2={y(value)} stroke={ratio === 0 ? chartColors.ink : chartColors.grid} strokeOpacity={ratio === 0 ? 0.55 : 1} />
+              <text x={padding.left - 10} y={y(value) + 4} textAnchor="end" className="fill-black/40 text-[11px]">
+                {formatManYenLabel(value)}
+              </text>
+            </g>
+          );
+        })}
+        {rows.map((row) => {
+          const top = y(Math.max(row.monthlyNetProfit, 0));
+          const bottom = y(Math.min(row.monthlyNetProfit, 0));
+          return (
+            <rect
+              key={row.month}
+              x={x(row.month) - barWidth / 2}
+              y={top}
+              width={barWidth}
+              height={Math.max(bottom - top, 1)}
+              fill={row.monthlyNetProfit >= 0 ? chartColors.primary : chartColors.secondary}
+              opacity="0.55"
+            />
+          );
+        })}
+        <path d={cumulativePath} fill="none" stroke={chartColors.primary} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        {breakEvenRow ? (
+          <g>
+            <circle cx={x(breakEvenRow.month)} cy={y(breakEvenRow.cumulative)} r="5" fill={chartColors.primary} stroke="#fff" strokeWidth="2" />
+            <text x={x(breakEvenRow.month) + 10} y={y(breakEvenRow.cumulative) - 8} className="fill-[#2E6B4F] text-[12px] font-medium">
+              黒字化 {breakEvenRow.month}ヶ月目
+            </text>
+          </g>
+        ) : null}
+        {[1, 12, 24, 36].map((month) => (
+          <text key={month} x={x(month)} y={height - 10} textAnchor="middle" className="fill-black/40 text-[11px]">
+            {month}ヶ月
+          </text>
+        ))}
+      </svg>
+    </ChartFrame>
+  );
+}
+
+function ChannelShiftChart({
+  current,
+  after,
+}: {
+  current: { ota: number; own: number; phone: number };
+  after: { ota: number; own: number; phone: number };
+}) {
+  const width = 760;
+  const height = 180;
+  const barX = 110;
+  const barWidth = 520;
+  const rows = [
+    { label: "現在", values: current },
+    { label: "12ヶ月後", values: after },
+  ];
+  const segments = [
+    { key: "ota", label: "OTA", color: chartColors.secondary },
+    { key: "own", label: "自社", color: chartColors.primary },
+    { key: "phone", label: "電話", color: chartColors.muted },
+  ] as const;
+  const ownDelta = (after.own - current.own) * 100;
+
+  return (
+    <ChartFrame
+      title="予約チャネル構成の変化"
+      subtitle={`自社予約比率の変化：${ownDelta >= 0 ? "+" : ""}${formatDecimalNumber(ownDelta, 1)}pt`}
+    >
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto min-w-[640px]" role="img" aria-label="予約チャネル構成の変化">
+        {rows.map((row, rowIndex) => {
+          let currentX = barX;
+          return (
+            <g key={row.label} transform={`translate(0 ${42 + rowIndex * 64})`}>
+              <text x="20" y="24" className="fill-black/55 text-[12px] font-medium">{row.label}</text>
+              {segments.map((segment) => {
+                const value = row.values[segment.key];
+                const segmentWidth = value * barWidth;
+                const element = (
+                  <g key={segment.key}>
+                    <rect x={currentX} y="0" width={segmentWidth} height="34" fill={segment.color} />
+                    {segmentWidth > 42 ? (
+                      <text x={currentX + segmentWidth / 2} y="22" textAnchor="middle" className="fill-white text-[11px] font-medium">
+                        {formatDecimalNumber(value * 100, 1)}%
+                      </text>
+                    ) : null}
+                  </g>
+                );
+                currentX += segmentWidth;
+                return element;
+              })}
+            </g>
+          );
+        })}
+        <g transform="translate(110 150)">
+          {segments.map((segment, index) => (
+            <g key={segment.key} transform={`translate(${index * 110} 0)`}>
+              <rect width="14" height="14" fill={segment.color} />
+              <text x="20" y="12" className="fill-black/55 text-[12px]">{segment.label}</text>
+            </g>
+          ))}
+        </g>
+      </svg>
+    </ChartFrame>
+  );
+}
+
+function YearlyBreakdownChart({ result }: { result: CommoSimulationResult }) {
+  const width = 760;
+  const height = 280;
+  const padding = { top: 26, right: 36, bottom: 44, left: 64 };
+  const maxValue = Math.max(
+    ...result.yearSummaries.map((summary) => summary.totalProfit),
+    1,
+  );
+  const barWidth = 96;
+  const x = (index: number) => padding.left + index * 210 + 60;
+  const y = (value: number) =>
+    height -
+    padding.bottom -
+    (value / maxValue) * (height - padding.top - padding.bottom);
+  const parts = [
+    { key: "repeatProfit", label: "再来場利益", color: chartColors.primary },
+    { key: "otaSaving", label: "OTA削減", color: chartColors.secondary },
+    { key: "inquirySaving", label: "問い合わせ削減", color: chartColors.muted },
+  ] as const;
+
+  return (
+    <ChartFrame
+      title="改善効果の内訳"
+      subtitle="1年目から3年目まで、利益ベースの改善額を積み上げで表示します。"
+    >
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto min-w-[640px]" role="img" aria-label="改善効果の年次内訳">
+        {[0, 0.5, 1].map((ratio) => {
+          const value = maxValue * ratio;
+          return (
+            <g key={ratio}>
+              <line x1={padding.left} y1={y(value)} x2={width - padding.right} y2={y(value)} stroke={chartColors.grid} />
+              <text x={padding.left - 10} y={y(value) + 4} textAnchor="end" className="fill-black/40 text-[11px]">
+                {formatManYenLabel(value)}
+              </text>
+            </g>
+          );
+        })}
+        {result.yearSummaries.map((summary, index) => {
+          let stackTop = height - padding.bottom;
+          return (
+            <g key={summary.year}>
+              {parts.map((part) => {
+                const value = summary[part.key];
+                const segmentHeight =
+                  (value / maxValue) * (height - padding.top - padding.bottom);
+                stackTop -= segmentHeight;
+                return (
+                  <rect
+                    key={part.key}
+                    x={x(index)}
+                    y={stackTop}
+                    width={barWidth}
+                    height={Math.max(segmentHeight, value > 0 ? 1 : 0)}
+                    fill={part.color}
+                  />
+                );
+              })}
+              <text x={x(index) + barWidth / 2} y={height - 14} textAnchor="middle" className="fill-black/50 text-[12px]">
+                {summary.year}年目
+              </text>
+              <text x={x(index) + barWidth / 2} y={stackTop - 8} textAnchor="middle" className="fill-[#3A2A1C] text-[12px] font-medium">
+                {formatManYenLabel(summary.totalProfit)}
+              </text>
+            </g>
+          );
+        })}
+        <g transform="translate(430 18)">
+          {parts.map((part, index) => (
+            <g key={part.key} transform={`translate(0 ${index * 20})`}>
+              <rect width="12" height="12" fill={part.color} />
+              <text x="18" y="11" className="fill-black/55 text-[11px]">{part.label}</text>
+            </g>
+          ))}
+        </g>
+      </svg>
+    </ChartFrame>
+  );
+}
+
+function ScenarioComparisonChart({
+  summaries,
+}: {
+  summaries: CommoScenarioSummary[];
+}) {
+  const width = 760;
+  const height = 280;
+  const padding = { top: 28, right: 40, bottom: 50, left: 64 };
+  const maxValue = Math.max(
+    ...summaries.map((summary) => summary.result.rows[11].effective),
+    1,
+  );
+  const barWidth = 92;
+  const x = (index: number) => padding.left + index * 190 + 70;
+  const y = (value: number) =>
+    height -
+    padding.bottom -
+    (value / maxValue) * (height - padding.top - padding.bottom);
+
+  return (
+    <ChartFrame
+      title="登録率シナリオ比較"
+      subtitle="12ヶ月後の有効友だち数と黒字化月数を比較します。"
+    >
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-auto min-w-[640px]" role="img" aria-label="登録率シナリオ比較">
+        {[0, 0.5, 1].map((ratio) => {
+          const value = maxValue * ratio;
+          return (
+            <g key={ratio}>
+              <line x1={padding.left} y1={y(value)} x2={width - padding.right} y2={y(value)} stroke={chartColors.grid} />
+              <text x={padding.left - 10} y={y(value) + 4} textAnchor="end" className="fill-black/40 text-[11px]">
+                {formatNumber(value)}
+              </text>
+            </g>
+          );
+        })}
+        {summaries.map((summary, index) => {
+          const value = summary.result.rows[11].effective;
+          const top = y(value);
+          return (
+            <g key={summary.label}>
+              <rect x={x(index)} y={top} width={barWidth} height={height - padding.bottom - top} fill={summary.signupRate === 10 ? chartColors.primary : chartColors.secondary} />
+              <text x={x(index) + barWidth / 2} y={top - 8} textAnchor="middle" className="fill-[#3A2A1C] text-[12px] font-medium">
+                {formatNumber(value)}人
+              </text>
+              <text x={x(index) + barWidth / 2} y={height - 28} textAnchor="middle" className="fill-black/55 text-[12px]">
+                登録率{summary.label}
+              </text>
+              <text x={x(index) + barWidth / 2} y={height - 10} textAnchor="middle" className="fill-black/40 text-[11px]">
+                黒字化 {summary.result.breakEvenMonth ? `${summary.result.breakEvenMonth}ヶ月` : "12ヶ月以降"}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </ChartFrame>
+  );
+}
+
+function AssumptionPanel({
+  inputs,
+  commoSimulation,
+  onInputChange,
+}: {
+  inputs: SimulationInputs;
+  commoSimulation: CommoSimulationResult;
+  onInputChange?: (key: string, value: string | string[], isText?: boolean) => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const assumptionFields: FieldConfig[] = [
+    { key: "signupRate", label: "登録率", suffix: "%", subLabel: "仮定値" },
+    { key: "lineBlockRate", label: "ブロック率", suffix: "%", subLabel: "公開データ参考" },
+    { key: "annualRevisitRate", label: "年間追加再来訪率", suffix: "%", subLabel: "仮定値" },
+    { key: "directBookingShiftRate", label: "自社予約シフト率", suffix: "%", subLabel: "仮定値" },
+    { key: "grossMargin", label: "粗利率", suffix: "%", subLabel: "仮定値" },
+    { key: "maxPenetration", label: "上限浸透率", suffix: "%", subLabel: "仮定値" },
+    { key: "avgVisitsPerPerson", label: "年間平均来場回数", suffix: "回", subLabel: "ヒアリング値" },
+    { key: "memberVisitShare", label: "会員の来場構成比", suffix: "%", subLabel: "ヒアリング値" },
+  ];
+
+  return (
+    <section className="border-b border-black/8 bg-[#fbfbfc]">
+      <button
+        type="button"
+        onClick={() => setIsOpen((open) => !open)}
+        className="flex w-full items-center justify-between px-5 py-4 text-left text-sm font-medium text-black/72 transition hover:text-[#2E6B4F]"
+        aria-expanded={isOpen}
+      >
+        前提値を見る
+        <ChevronDown size={16} className={["transition", isOpen ? "rotate-180" : ""].join(" ")} />
+      </button>
+      {isOpen ? (
+        <div className="border-t border-black/8 bg-white px-5 py-5">
+          <div className="grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-4">
+            {assumptionFields.map((field) => (
+              <HearingInput
+                key={field.key}
+                field={field}
+                value={inputs[field.key]}
+                onInputChange={onInputChange ?? (() => undefined)}
+              />
+            ))}
+          </div>
+          <div className="mt-4 grid gap-px bg-black/8 md:grid-cols-2 xl:grid-cols-4">
+            <CurrentMetricCard label="加重平均単価" value={formatCurrency(commoSimulation.avgPrice)} description="メンバー料金とビジター料金を来場構成比で加重" />
+            <CurrentMetricCard label="現状の年間OTA手数料" value={formatCurrency(commoSimulation.currentOtaCost)} description="年商 × 外部予約サイト比率 × 手数料率" />
+            <CurrentMetricCard label="ユニーク来場者数" value={`${formatNumber(commoSimulation.uniqueVisitors)}人`} description="年間のべ来場数 ÷ 年間平均来場回数" />
+            <CurrentMetricCard label="友だち到達上限" value={`${formatNumber(commoSimulation.ceiling)}人`} description="ユニーク来場者数 × 上限浸透率" />
+          </div>
+          <p className="mt-4 text-xs leading-6 text-black/45">
+            金額はすべて税別想定です。収支・ROIは売上ではなく利益ベースで表示しています。成果を保証するものではありません。
+          </p>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function ResultHeroSummary({
   industry,
   labels,
@@ -4002,6 +5030,7 @@ function ResultHeroSummary({
   currentProjection,
   oneYearProjection,
   monthlyOperationCost,
+  commoSimulation,
 }: {
   industry: Industry;
   labels: (typeof industryMessageLabels)[Industry];
@@ -4009,24 +5038,26 @@ function ResultHeroSummary({
   currentProjection: ReturnType<typeof buildCurrentProjection>;
   oneYearProjection: ProjectionRow;
   monthlyOperationCost: number;
+  commoSimulation: CommoSimulationResult;
 }) {
-  const monthlyCustomers = getMonthlyCustomers(industry, inputs);
-  const lineCase = getLineGrowthCase(inputs);
-  const annualRepeatRevenue = oneYearProjection.repeatRevenue * 12;
-  const annualFeeSaving = oneYearProjection.feeSaving * 12;
-  const annualFeeSavingLow = annualFeeSaving * 0.7;
-  const annualFeeSavingHigh = annualFeeSaving * 1.3;
   const annualInvestment = initialLineSetupCost + monthlyOperationCost * 12;
-  const breakEvenMonth =
-    oneYearProjection.cumulativeProfit >= 0
-      ? Math.max(1, Math.ceil(annualInvestment / Math.max(oneYearProjection.monthlyDifference, 1)))
-      : null;
-  const repeatDelta =
-    oneYearProjection.repeatRatio - currentProjection.repeatRatio;
-  const directDelta =
-    oneYearProjection.directRatio - currentProjection.directRatio;
-  const monthlyImpactOverCost =
-    oneYearProjection.monthlyDifference - monthlyOperationCost;
+  const year1 = commoSimulation.yearSummaries[0];
+  const month12 = commoSimulation.rows[11];
+  const heroAmount = getSelectedStrings(inputs, "currentIssue").some((issue) =>
+    issue.includes("問い合わせ") || issue.includes("案内が分散"),
+  )
+    ? year1.inquirySaving
+    : getSelectedStrings(inputs, "currentIssue").some((issue) =>
+          issue.includes("手数料") || issue.includes("自社予約"),
+        )
+      ? year1.otaSaving
+      : year1.repeatProfit;
+  const heroAmountLabel =
+    heroAmount === year1.inquirySaving && heroAmount > 0
+      ? "問い合わせ削減利益"
+      : heroAmount === year1.otaSaving
+        ? `${labels.externalSiteLabel}手数料削減`
+        : "再来場による追加利益";
 
   return (
     <section className="border-b border-black/8 bg-white px-5 py-6">
@@ -4046,26 +5077,30 @@ function ResultHeroSummary({
 
       <div className="mt-5 grid gap-px bg-black/8 lg:grid-cols-3">
         <HeroMetricCard
-          label="年間の追加売上"
-          before="¥0"
-          after={`${formatSignedApproxManYen(annualRepeatRevenue)}／年`}
-          description={`${getCustomerLabel(industry)}${formatNumber(monthlyCustomers)}人 × 登録${lineCase.rate.toFixed(1)}% × 再来訪率${formatPercent(getFriendRepeatConversionRate(inputs))}で試算`}
+          label="12ヶ月後の有効友だち数"
+          before={`${formatNumber(currentProjection.lineFriends)}人`}
+          after={`${formatNumber(month12.effective)}人`}
+          description={`友だち数${formatNumber(month12.friends)}人からブロック率${formatPercent(commoSimulation.input.blockRate * 100)}を控除`}
           featured
         />
         <HeroMetricCard
-          label="LINE友だち数"
-          before={`${formatNumber(currentProjection.lineFriends)}人`}
-          after={`${formatNumber(oneYearProjection.lineFriends)}人`}
-          description={`登録後のブロック率${formatPercent(getLineBlockRate(inputs))}を控除したネット友だち数`}
+          label={heroAmountLabel}
+          before="利益ベース"
+          after={`${formatSignedApproxManYen(heroAmount)}／年`}
+          description="追加売上には粗利率を掛け、手数料削減はそのまま利益として計算"
         />
         <HeroMetricCard
-          label="12ヶ月の累計収支"
+          label="黒字化まで"
           before={`投資 ${formatApproxManYen(annualInvestment)}`}
-          after={formatSignedApproxManYen(oneYearProjection.cumulativeProfit)}
+          after={
+            commoSimulation.breakEvenMonth
+              ? `${commoSimulation.breakEvenMonth}ヶ月目`
+              : "12ヶ月以降"
+          }
           description={
-            breakEvenMonth
-              ? `黒字化：${breakEvenMonth}ヶ月目の想定`
-              : "12ヶ月内は投資回収前の想定"
+            commoSimulation.breakEvenMonth
+              ? `累計収支が0円を上回る月。12ヶ月累計は${formatSignedApproxManYen(month12.cumulative)}`
+              : `12ヶ月累計は${formatSignedApproxManYen(month12.cumulative)}`
           }
         />
       </div>
@@ -4074,30 +5109,35 @@ function ResultHeroSummary({
         <KpiShift
           label={labels.directRateLabel}
           before={formatPercent(currentProjection.directRatio)}
-          after={formatPercent(oneYearProjection.directRatio)}
-          delta={`+${formatDecimalNumber(directDelta, 1)}ポイント`}
-          note={`${labels.externalSiteLabel}予約の${formatPercent(getDirectBookingShiftRate(inputs))}を12ヶ月目の移行目標に設定`}
+          after={formatPercent(month12.ownRatio * 100)}
+          delta={`+${formatDecimalNumber(month12.ownRatio * 100 - currentProjection.directRatio, 1)}ポイント`}
+          note={`${labels.externalSiteLabel}予約のうち、LINE接点がある来場分の一部が自社予約へ移る前提`}
         />
         <KpiShift
-          label="リピーター率"
-          before={formatPercent(currentProjection.repeatRatio)}
-          after={formatPercent(oneYearProjection.repeatRatio)}
-          delta={`+${formatDecimalNumber(repeatDelta, 1)}ポイント`}
-          note="LINE配信後の再来訪施策が段階的に効く想定"
+          label="1年目の追加利益"
+          before="売上ではなく利益"
+          after={formatSignedApproxManYen(year1.totalProfit)}
+          delta={`収支 ${formatSignedApproxManYen(year1.netProfit)}`}
+          note="再来場利益、手数料削減、問い合わせ削減の合計"
         />
         <KpiShift
           label={`${labels.externalSiteLabel}${getExternalCostLabel(industry)}削減`}
           before="¥0"
-          after={`${formatApproxManYen(annualFeeSavingLow)}〜${formatApproxManYen(annualFeeSavingHigh)}／年`}
-          delta={formatSignedApproxManYen(annualFeeSaving)}
-          note="入力された外部予約比率と費用率から作成した仮想レンジ"
+          after={`${formatApproxManYen(year1.otaSaving)}／年`}
+          delta={`${formatDecimalNumber(
+            commoSimulation.currentOtaCost
+              ? (year1.otaSaving / commoSimulation.currentOtaCost) * 100
+              : 0,
+            1,
+          )}%`}
+          note={`現状手数料${formatApproxManYen(commoSimulation.currentOtaCost)}に対する削減率`}
         />
         <KpiShift
           label="月額運用費との比較"
           before={formatApproxManYen(monthlyOperationCost)}
-          after={formatSignedApproxManYen(monthlyImpactOverCost)}
-          delta={monthlyImpactOverCost >= 0 ? "改善が上回る" : "立ち上げ中"}
-          note="12ヶ月目の月間改善額から月額運用費を差し引き"
+          after={formatSignedApproxManYen(month12.monthlyNetProfit)}
+          delta={month12.monthlyNetProfit >= 0 ? "改善が上回る" : "立ち上げ中"}
+          note="12ヶ月目の月間利益から月額運用費を差し引き"
         />
       </div>
     </section>
